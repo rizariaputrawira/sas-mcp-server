@@ -141,6 +141,7 @@ If your compute deployment does not expose `/compute/contexts` and only supports
 - **Deploying for a team or on a server?** Use **Docker** — portable, no Python dependency on the host, easy to integrate with orchestrators.
 - **Running it for a whole organisation?** Use **Kubernetes** — sample manifests and a Helm chart are in [deploy/](/deploy/README.md), including the routing the OAuth flow needs for either **Contour** (the chart's default, and the only one that can mount the server under a path prefix on an existing hostname) or **ingress-nginx**.
 - **Using Gemini CLI?** Use **stdio** — Gemini CLI does not support HTTP mode or browser-based OAuth. See [Gemini CLI configuration](examples/configuration.md#gemini-cli).
+- **Integrating with Microsoft 365 Copilot?** Use **Kubernetes** (or any remote HTTPS deployment) — Copilot declarative agents only reach remotely hosted MCP servers. A ready-to-sideload agent package and walkthrough are in [examples/m365-copilot/](examples/m365-copilot/README.md).
 - **Installing from a client's server catalogue?** That path runs the published container in **stdio** mode (`app-stdio`), not as an HTTP server, so it authenticates from your `~/.sas` token cache — which has to be mounted into the container at `/app/.sas`.
 
 ### Limiting exposed tools (tiers)
