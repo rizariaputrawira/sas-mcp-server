@@ -16,10 +16,22 @@ are made — tools are only enumerated):
 
 The output defaults to ``appPackage/mcp-tools.json`` next to this script.
 
+Pinning tools takes three edits to ``ai-plugin.json``, not one: the tool names
+go in the manifest's ``functions`` array *and* the runtime's
+``run_for_functions``, and their definitions go in ``mcp_tool_description``.
+This script prints the first two ready to paste, so nobody hand-lists 23 names.
+
 Note: opt-in collection-mode telemetry (COLLECTION_MODE=true) injects a
 ``goal`` parameter into every tool schema, and that shows up here too. Match
 the setting to the deployment you are pinning tools for — the checked-in file
 was generated with collection mode off (the default).
+
+Note: tool *annotations* (``readOnlyHint`` and friends, which this server has
+advertised since 1.11.0) are deliberately left out. Plugin manifest schema 2.4
+says each pinned tool object contains ``name``, ``description`` and
+``inputSchema``, and that unrecognized properties SHOULD invalidate the whole
+document — so shipping annotations here risks the package, and buys nothing.
+Dynamic tool discovery reads them straight off the server, where they are.
 """
 
 import argparse
@@ -52,6 +64,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(__file__).parent / "appPackage" / "mcp-tools.json",
         help="Output path (default: appPackage/mcp-tools.json beside this script).",
+    )
+    parser.add_argument(
+        "--plugin-snippet",
+        action="store_true",
+        help="Also print the 'functions' and 'run_for_functions' arrays that "
+        "ai-plugin.json needs in pinned-tools mode, ready to paste.",
     )
     return parser.parse_args()
 
@@ -104,6 +122,24 @@ def main() -> None:
         f"Wrote {len(manifest['tools'])} tool descriptions to {args.output}",
         file=sys.stderr,
     )
+
+    if args.plugin_snippet:
+        names = [tool["name"] for tool in manifest["tools"]]
+        print(
+            json.dumps(
+                {
+                    "functions": [{"name": name} for name in names],
+                    "run_for_functions": names,
+                },
+                indent=4,
+            )
+        )
+        print(
+            "\nPaste 'functions' at the top level of ai-plugin.json and "
+            "'run_for_functions' into the RemoteMCPServer runtime, replacing "
+            'its ["*"] (dynamic discovery) value.',
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

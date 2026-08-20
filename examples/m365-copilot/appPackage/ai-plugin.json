@@ -5,6 +5,7 @@
     "name_for_human": "SAS Viya",
     "description_for_human": "Discover CAS data, run FedSQL queries, and execute SAS code on SAS Viya.",
     "description_for_model": "Tools for working with a SAS Viya analytics environment. Use them whenever the user asks about their data, tables, caslibs, SAS programs, statistics, or analytics. Typical flow: list_caslibs and list_castables to discover data, get_castable_columns / get_castable_info for structure, query_data (FedSQL) or get_castable_data for retrieval, and execute_sas_code for SAS procedures and DATA steps. Results reflect the signed-in user's own SAS Viya permissions.",
+    "functions": [],
     "runtimes": [
         {
             "type": "RemoteMCPServer",
@@ -14,7 +15,10 @@
             },
             "spec": {
                 "url": "https://sas-mcp.example.com/mcp"
-            }
+            },
+            "run_for_functions": [
+                "*"
+            ]
         }
     ],
     "capabilities": {

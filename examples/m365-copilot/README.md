@@ -16,18 +16,24 @@ Microsoft 365 Copilot                    SAS Viya MCP Server                SAS 
 
 - Copilot connects to the server's **streamable HTTP** endpoint (`/mcp`). Local stdio servers cannot be used — Microsoft 365 only reaches **remotely hosted** MCP servers over HTTPS.
 - On the first tool call, Copilot pops a sign-in window. The MCP server's built-in OAuth proxy sends the user through **SAS Logon**, so results always reflect that user's own Viya permissions — no shared service account.
-- The agent's tool list comes from the server at runtime (**dynamic tool discovery**), so what you expose is controlled server-side with `MCP_TIERS` / `MCP_READ_ONLY`.
+- The agent's tool list comes from the server at runtime (**dynamic tool discovery**), so what you expose is controlled server-side with `MCP_TIERS` / `MCP_READ_ONLY` — change the deployment's scope and the agent follows, with no repackaging. Copilot re-validates each changed tool definition before activating it.
+- Since 1.11.0 every tool also advertises **MCP tool annotations** (`readOnlyHint`, `destructiveHint`, …). Dynamic discovery reads them straight from the server; the pinned-tools file cannot carry them (see below).
+- Tools that return interactive UI widgets ([MCP apps](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps)) render inline in Copilot. This server returns text and structured JSON, so nothing here needs that — it is just a capability you would get for free if a tool grew one.
 
 ## Prerequisites
 
-1. **A remotely hosted SAS Viya MCP Server with TLS.** The [Kubernetes deployment](../../deploy/README.md) (sample manifest or Helm chart) is the intended shape: it serves `/mcp` **and the OAuth sibling paths at the host root** (`/authorize`, `/token`, `/register`, `/consent`, `/auth/callback`, and the two `/.well-known/` documents) — all eight must be reachable, or clients can connect but never sign in.
-2. **The standard Viya-side setup** from [configuration.md](../configuration.md): the `sas-mcp` OAuth client registered with `redirect_uri` = `<MCP_BASE_URL>/auth/callback`, and the `form-action` CSP addressed (hosting the server on the Viya host, as the deploy docs do, sidesteps it).
+1. **A remotely hosted SAS Viya MCP Server with TLS.** Microsoft's cloud has to reach it, so it needs a public HTTPS endpoint — a local stdio server or a cluster-internal service cannot be used. The [Kubernetes deployment](../../deploy/README.md) (sample manifest or Helm chart) is the intended shape: it serves `/mcp` **and the OAuth sibling paths** (`/authorize`, `/token`, `/register`, `/consent`, `/auth/callback`, and the two `/.well-known/` documents) — all eight must be reachable, or clients can connect but never sign in.
+
+    **The easiest shape for Copilot is to mount the server on the Viya hostname itself**, at `https://<your-viya-host>/sas-mcp/mcp`. Since chart 0.2.0 that is `ingress.controller: contour` plus `ingress.pathPrefix: /sas-mcp` — see [CONTOUR-DEPLOYMENT.md](../../deploy/CONTOUR-DEPLOYMENT.md), and [AKS-CONTOUR.md](../../deploy/AKS-CONTOUR.md) if you are on Azure. It reuses Viya's certificate, DNS record and load balancer (no second hostname to get approved), and because the server is then same-origin with SAS Logon it sidesteps the `form-action` CSP problem in the next prerequisite entirely. The chart handles the routing the prefix needs — including the two discovery documents, which stay at the host root.
+
+    **Check it from outside your network before you go near Copilot:** open `https://<host>/mcp` in a browser. Since 1.10.0 that returns a landing page describing the deployment (name, Viya host, exposed tiers, per-client configuration snippets) instead of a bare `401`, which makes it a one-glance reachability and configuration test. If you get a certificate warning, Copilot will fail too — Microsoft's cloud will not accept a self-signed chain.
+2. **The standard Viya-side setup** from [configuration.md](../configuration.md): the `sas-mcp` OAuth client registered with `redirect_uri` = `<MCP_BASE_URL>/auth/callback`, and the `form-action` CSP addressed — mounting on the Viya hostname (prerequisite 1) makes the callback same-origin and sidesteps it.
 3. **A Microsoft 365 tenant** where your account shows **Custom App Upload Enabled** and **Copilot Access Enabled** (Copilot license or metered usage). See [Microsoft's prerequisites](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/prerequisites).
 4. For the guided path (Option A): [Visual Studio Code](https://code.visualstudio.com/) with the [Microsoft 365 Agents Toolkit](https://aka.ms/M365AgentsToolkit) **6.12.0 or later**.
 
 ### Recommended server configuration for this demo
 
-Copilot sees every tool the server exposes, and 70+ tools dilute tool selection. Scope the deployment to the demo's needs:
+Copilot sees every tool the server exposes, and this server has 75 of them — far too many for reliable tool selection. Scope the deployment to the demo's needs:
 
 ```sh
 MCP_TIERS=0-1        # 23 tools: Compute & Code Execution + Data Discovery
@@ -78,6 +84,8 @@ This mirrors the blog post's walkthrough; the toolkit generates the same three f
 6. Replace the generated `declarativeAgent.json` `instructions` and `conversation_starters` with the ones from [`appPackage/declarativeAgent.json`](appPackage/declarativeAgent.json) — they encode a discovery-first workflow tuned to this server's tools.
 7. In the **Accounts** pane, sign in to Microsoft 365; in the **Lifecycle** pane, select **Provision** to sideload the agent into your tenant.
 
+> Microsoft also ships a command-line path for the same loop, **Work IQ Dev Tools** (`wiqd agent package`, `wiqd agent provision --env local`). It is in preview and its connector commands are marked alpha, so the toolkit UI above is the safer route for now — but it is the one to watch if you want this in CI. See the [Work IQ Dev Tools documentation](https://aka.ms/wiqd/docs).
+
 ## Option B — use the pre-built app package in this folder
 
 [`appPackage/`](appPackage/) is a complete, sideload-ready package; only two values need replacing.
@@ -112,23 +120,59 @@ The first tool call prompts **Sign in** — that's the OAuth flow handing the us
 
 ## Pinned tools instead of dynamic discovery
 
-By default the plugin manifest omits tool definitions, so Copilot fetches them from the server at runtime. To ship a **fixed, curated tool list** inside the app package instead (useful for store validation, or to freeze the surface independently of the server), point the runtime spec at [`appPackage/mcp-tools.json`](appPackage/mcp-tools.json):
+The shipped `ai-plugin.json` uses **dynamic tool discovery**: an empty `functions` array and `"run_for_functions": ["*"]`, so Copilot fetches the tool list from the server per session. Pin a **fixed, curated list** into the app package instead when you need the surface frozen — store validation, or a tool list that cannot move under a published agent.
+
+Pinning is **three edits, not one**, and the first two are easy to miss: the tool *names* go in the manifest's top-level `functions` array **and** in the runtime's `run_for_functions`, while their *definitions* go in `mcp_tool_description`. A package that only sets `mcp_tool_description` declares no functions and the agent calls nothing.
 
 ```json
-"spec": {
-    "url": "https://sas-mcp.example.com/mcp",
-    "mcp_tool_description": { "file": "mcp-tools.json" }
-}
+"functions": [
+    { "name": "list_caslibs" },
+    { "name": "query_data" }
+],
+"runtimes": [
+    {
+        "type": "RemoteMCPServer",
+        "auth": { "type": "OAuthPluginVault", "reference_id": "…" },
+        "spec": {
+            "url": "https://sas-mcp.example.com/mcp",
+            "mcp_tool_description": { "file": "mcp-tools.json" }
+        },
+        "run_for_functions": ["list_caslibs", "query_data"]
+    }
+]
 ```
 
-The checked-in `mcp-tools.json` holds the 23 tier 0–1 tools, generated from the actual server code — never hand-edit it. Regenerate it to match your deployment's scope:
+The checked-in `mcp-tools.json` holds the 23 tier 0–1 tools, generated from the actual server code — never hand-edit it. `--plugin-snippet` prints the two name arrays ready to paste, so nobody types 23 names by hand:
 
 ```sh
-uv run python examples/m365-copilot/generate_tools_manifest.py --tiers 0-1
+uv run python examples/m365-copilot/generate_tools_manifest.py --tiers 0-1 --plugin-snippet
 uv run python examples/m365-copilot/generate_tools_manifest.py --tiers 0-3 --read-only
 ```
 
-When the pinned file changes, bump `version` in `manifest.json` and re-upload the zip.
+**Tool annotations are deliberately absent from the pinned file.** The server advertises `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` on every tool (1.11.0+), but plugin manifest schema 2.4 defines a pinned tool object as `name`, `description` and `inputSchema`, and states that unrecognized properties *should* invalidate the whole document. Shipping the annotations here would risk the package for no gain. Dynamic discovery reads them from the server, where they live.
+
+The Agents Toolkit can do the same job interactively: open `.vscode/mcp.json`, select **Start**, then **ATK: Fetch action from MCP** → `ai-plugin.json`, and pick the tools. It writes both arrays and the definitions for you.
+
+When the pinned list changes, bump `version` in `manifest.json` and re-upload the zip. This is the cost of pinning: every server-side tool change needs a repackage, whereas dynamic discovery picks it up at runtime.
+
+## Validate before you sideload
+
+Sideloading reports a bad package as one unhelpful message, so check it first:
+
+```sh
+uv run python examples/m365-copilot/validate_package.py
+```
+
+It validates all three manifests against Microsoft's **published** schemas (fetched live, so a schema revision surfaces here rather than at upload), confirms every referenced file exists and the icons really are 192×192 and 32×32, and checks that the tool wiring is *complete* in whichever mode you chose.
+
+**Two schema errors are expected, and the script reports them as tolerated.** They are defects in Microsoft's published v2.4 schema, not in this package — two `oneOf` branch sets that overlap, so a correct document matches two branches and is rejected:
+
+| Where | Why it fails | Consequence |
+| --- | --- | --- |
+| `runtime.spec` | `{"url": …}` satisfies both `open-api-spec` and `mcp-execution-spec` | Every MCP plugin manifest hits it, including the dynamic-discovery example in Microsoft's own docs |
+| `mcp_tool_description` | `{"file": …}` satisfies both `mcp-tool-file-reference` and `mcp-tool-inline` (that branch is an unconstrained object) | Only the **inline** form of pinned tools validates; the file form does not |
+
+Neither blocks sideloading today — the runtime does not enforce the published schema. But if you hit a validator that does (store submission, a CI step), pinning tools *inline* rather than by `file` is the form that passes. Run `--strict` to check whether Microsoft has fixed either one.
 
 ## Files in this folder
 
@@ -139,21 +183,25 @@ When the pinned file changes, bump `version` in `manifest.json` and re-upload th
 | `appPackage/ai-plugin.json` | Plugin manifest (schema v2.4) with the `RemoteMCPServer` runtime pointing at `/mcp` |
 | `appPackage/mcp-tools.json` | Generated `tools/list` snapshot for the optional pinned-tools mode |
 | `appPackage/color.png`, `appPackage/outline.png` | Placeholder icons — replace with real branding |
-| `generate_tools_manifest.py` | Regenerates `mcp-tools.json` from the server code (`--tiers`, `--read-only`) |
+| `generate_tools_manifest.py` | Regenerates `mcp-tools.json` from the server code (`--tiers`, `--read-only`, `--plugin-snippet`) |
+| `validate_package.py` | Checks the package against Microsoft's schemas and catches incomplete tool wiring before sideload |
 
 ## Troubleshooting
 
-- **The agent responds but never calls a tool / "couldn't reach the service".** The server must be reachable from Microsoft's cloud over HTTPS at the exact `spec.url`. Verify `https://<host>/mcp` responds and that the deployment routes all eight OAuth/MCP paths (see [deploy/](../../deploy/README.md)).
+- **The agent responds but never calls a tool / "couldn't reach the service".** The server must be reachable from Microsoft's cloud over HTTPS at the exact `spec.url`. Open `https://<host>/mcp` in a browser from outside your network: the landing page means the endpoint and its TLS chain are fine, and it lists the tiers the deployment actually exposes. Then confirm the deployment routes all eight OAuth/MCP paths (see [deploy/](../../deploy/README.md)) — an agent that connects but never signs in is almost always a missing `/.well-known/` or `/authorize` route.
 - **Sign-in window opens SAS Logon but never returns.** The `form-action` CSP on SAS Logon is blocking the redirect back to the server's `/auth/callback` — see [configuration.md, Step 1](../configuration.md#step-1-disable-form-action-content-security-policy-on-sas-logon-manager); hosting the MCP server on the Viya host avoids this entirely.
 - **Every call fails with 401 in static-OAuth mode.** The server isn't accepting raw Viya bearer tokens — set `ALLOW_RAW_BEARER=true`.
 - **Tool calls time out.** Keep demo queries small (the agent instructions already push for `LIMIT`ed previews); long-running SAS jobs are better served by the batch tools in tier 4.
 - **Copilot picks the wrong tool or rambles through many calls.** Narrow the server-side surface (`MCP_TIERS`), or switch to pinned tools with a curated subset.
-- **A pinned tool list is stale after a server upgrade.** Regenerate `mcp-tools.json`, bump the app `version`, re-zip, re-upload.
+- **A pinned tool list is stale after a server upgrade.** Regenerate `mcp-tools.json`, bump the app `version`, re-zip, re-upload. Dynamic discovery avoids this class of problem entirely.
+- **Pinned mode: the agent has an action but calls nothing.** The `functions` array or `run_for_functions` is still empty — `mcp_tool_description` alone does not declare the functions. Run the generator with `--plugin-snippet` and paste both arrays.
 
 ## References
 
 - [Build declarative agents for Microsoft 365 Copilot with MCP](https://devblogs.microsoft.com/microsoft365dev/build-declarative-agents-for-microsoft-365-copilot-with-mcp/) (announcement blog)
 - [Build a plugin for a declarative agent from an MCP server](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/build-mcp-plugins)
-- [Plugin manifest schema v2.4](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-manifest-2.4) (`RemoteMCPServer` runtime)
+- [Plugin manifest schema v2.4](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-manifest-2.4) (`RemoteMCPServer` runtime, MCP server spec object)
+- [Dynamic tool discovery for MCP plugins](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-dynamic-tool-discovery) (pinned vs dynamic, and the admin/audit story)
+- [MCP apps in declarative agents](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps) (tools that return UI widgets)
 - [Declarative agent manifest schema v1.6](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/declarative-agent-manifest-1.6)
 - [Authentication for MCP and API plugins](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-authentication)
