@@ -89,7 +89,7 @@ async def dump_tools() -> dict:
             {
                 "name": tool.name,
                 "description": tool.description or "",
-                "inputSchema": tool.inputSchema,
+                "inputSchema": tool.input_schema,
             }
             for tool in tools
         ]
