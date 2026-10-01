@@ -29,6 +29,9 @@ data:
   {{- if ne $tiers "" }}
   MCP_TIERS: {{ $tiers | quote }}
   {{- end }}
+  {{- with .Values.server.toolRename }}
+  MCP_TOOL_RENAME: {{ . | quote }}
+  {{- end }}
   {{- with .Values.viya.computeSessionId }}
   COMPUTE_SESSION_ID: {{ . | quote }}
   {{- end }}

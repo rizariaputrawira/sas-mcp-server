@@ -222,6 +222,7 @@ async def collect_facts(
     allow_raw_bearer: bool,
     read_only: bool,
     enabled_tiers: Iterable[int] | None = None,
+    public_name: Callable[[str], str] | None = None,
     version: str | None = None,
 ) -> ServerFacts:
     """Snapshot the registered catalogue into a :class:`ServerFacts`.
@@ -238,7 +239,8 @@ async def collect_facts(
         ann = getattr(t, "annotations", None)
         by_tier.setdefault(TOOL_TIERS.get(t.name), []).append(
             ToolEntry(
-                name=t.name,
+                # What a client is shown, when MCP_TOOL_RENAME is in play.
+                name=public_name(t.name) if public_name else t.name,
                 summary=summarize(t.description),
                 read_only=_hint(ann, _READ_ONLY_HINT),
                 destructive=_hint(ann, _DESTRUCTIVE_HINT),

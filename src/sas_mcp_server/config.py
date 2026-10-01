@@ -144,6 +144,14 @@ MCP_APPS = env_bool("MCP_APPS", True)
 # ``initialize`` handshake keeps working either way. Costs a fresh transport per
 # request, which is why it is not the default.
 MCP_STATELESS_HTTP = env_bool("MCP_STATELESS_HTTP", False)
+# Rename tools on the wire (default: empty, no renaming). Comma-separated
+# ``old=new`` pairs, each replacing a tool-name prefix: ``catalog_=infocat_``
+# presents catalog_search as infocat_search, and so on. For hosts that refuse
+# names the protocol allows — Microsoft Copilot Studio's agent runtime fails
+# every turn (MCS-2011) while a tool starting with ``catalog_`` is listed.
+# Only what the client sees changes; the original names stay callable.
+# Parsed and applied by sas_mcp_server.tool_rename.
+MCP_TOOL_RENAME = os.getenv("MCP_TOOL_RENAME", "")
 
 _mcp_base_url = os.getenv("MCP_BASE_URL", "").strip()
 # An empty value is the documented .env.sample default. Also ignore values
