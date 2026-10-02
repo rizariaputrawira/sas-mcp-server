@@ -33,12 +33,15 @@ Microsoft 365 Copilot                    SAS Viya MCP Server                SAS 
 
 ### Recommended server configuration for this demo
 
-Copilot sees every tool the server exposes, and this server has 75 of them — far too many for reliable tool selection. Scope the deployment to the demo's needs:
+Copilot sees every tool the server exposes, and this server has 92 of them — far too many for reliable tool selection. Scope the deployment to the demo's needs:
 
 ```sh
-MCP_TIERS=0-1        # 23 tools: Compute & Code Execution + Data Discovery
+MCP_TIERS=0-1        # 24 tools: Compute & Code Execution + Data Discovery
 MCP_BASE_URL=https://sas-mcp.example.com   # the external HTTPS URL of the server
+MCP_OAUTH_CLIENT_SECRETS=true              # required for dynamic registration, see below
 ```
+
+`MCP_OAUTH_CLIENT_SECRETS=true` is what lets Copilot register itself. Microsoft's registration service insists on a confidential client: it refuses a server whose OAuth metadata lists no secret-based method — *"The authorization server does not support client_secret_basic or client_secret_post token endpoint authentication methods"* — and then a registration that comes back without a `client_secret`. By default this server registers every client as a public one, which is what other MCP clients expect; the setting makes it issue (and then require) a secret for a client that asks.
 
 Tiers 0–1 cover the whole demo flow (discover → profile → query → run SAS code). Add tier `3` for Visual Analytics report tools. `MCP_READ_ONLY=true` is a good fit for a locked-down, exploration-only agent — but note it withholds `execute_sas_code`, which the demo's "run SAS code" scenario uses.
 

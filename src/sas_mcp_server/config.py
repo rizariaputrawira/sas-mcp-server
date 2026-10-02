@@ -16,6 +16,13 @@ load_dotenv()
 
 SSL_VERIFY = env_bool("SSL_VERIFY", True)
 ALLOW_RAW_BEARER = env_bool("ALLOW_RAW_BEARER", False)
+# Issue and enforce client secrets for MCP clients that register asking for
+# one (default: false). FastMCP 4 registers every client as public; Microsoft
+# 365 Copilot's registration service asks for client_secret_basic and refuses
+# a registration that comes back without a secret, so a deployment used from a
+# Copilot declarative agent needs this on. Clients that register as public are
+# unaffected. See sas_mcp_server.auth.PermissiveOAuthProxy.register_client.
+MCP_OAUTH_CLIENT_SECRETS = env_bool("MCP_OAUTH_CLIENT_SECRETS", False)
 AUTH_ENABLED = env_bool("VIYA_AUTH", True)
 
 # --- Opt-in collection mode (telemetry) -------------------------------------
@@ -239,4 +246,5 @@ viya_auth = PermissiveOAuthProxy(
     token_verifier=token_verifier,
     valid_scopes=["openid"],
     allow_raw_bearer=ALLOW_RAW_BEARER,
+    client_secrets=MCP_OAUTH_CLIENT_SECRETS,
 )
