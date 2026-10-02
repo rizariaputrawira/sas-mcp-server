@@ -1,0 +1,48 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.28/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.28",
+    "version": "1.0.0",
+    "id": "fb03af92-3287-44fe-ac47-2962394b172b",
+    "developer": {
+        "name": "SAS Institute Inc.",
+        "websiteUrl": "https://github.com/sassoftware/sas-mcp-server",
+        "privacyUrl": "https://www.sas.com/en_us/legal/privacy-statement.html",
+        "termsOfUseUrl": "https://www.sas.com/en_us/legal/terms-of-use.html"
+    },
+    "name": {
+        "short": "SAS Viya",
+        "full": "SAS Viya for Copilot Cowork"
+    },
+    "description": {
+        "short": "Explore SAS Viya data and run SAS analytics from Copilot Cowork.",
+        "full": "Connects Copilot Cowork to a SAS Viya environment through the SAS Viya MCP Server. Discover CAS tables, profile columns, query data with FedSQL, and execute SAS code, with each user signed in to SAS Viya as themselves."
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "accentColor": "#FFFFFF",
+    "agentConnectors": [
+        {
+            "id": "sas-viya-mcp",
+            "displayName": "SAS Viya",
+            "description": "SAS Viya data and analytics: CAS servers, caslibs and tables, FedSQL queries, and SAS code execution as the signed-in SAS Viya user.",
+            "toolSource": {
+                "remoteMcpServer": {
+                    "mcpServerUrl": "https://sas-mcp.example.com/mcp",
+                    "mcpToolDescription": {
+                        "file": "tools/sas-viya-tools.json"
+                    }
+                }
+            }
+        }
+    ],
+    "agentSkills": [
+        {
+            "folder": "./skills/sas-viya-data-exploration"
+        },
+        {
+            "folder": "./skills/sas-viya-run-sas-code"
+        }
+    ]
+}

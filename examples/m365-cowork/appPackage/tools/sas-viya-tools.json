@@ -1,0 +1,1022 @@
+{
+  "tools": [
+    {
+      "name": "execute_sas_code",
+      "description": "Executes the provided SAS code in the Viya environment and returns information about the completed Job.\nThis will create a job definition for the SAS code, execute it, and then retrieve the results.\n\nIMPORTANT — state persists between calls: the code runs in a reusable\ncompute session that is kept warm and shared across calls (per user),\nso SAS state — WORK tables, macro variables, and assigned librefs —\nsurvives between successive ``execute_sas_code`` calls. A re-run can\ntherefore see leftovers from earlier calls (e.g. a check that counts\nresults twice). Pass ``fresh_session=True`` (or call\n``reset_compute_session``) when the code must start from a clean slate.\n\nTip: to reach CAS data, prefer ``libname casuser cas;`` (or a targeted\n``caslib`` statement) over ``caslib _all_ assign;`` — on tenants with\nmany caslibs the latter floods the log with assignment NOTEs.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "sas_code": {
+            "type": "string",
+            "description": "the SAS code snippet to be executed using the Viya Job Execution API Service"
+          },
+          "fresh_session": {
+            "default": false,
+            "type": "boolean",
+            "description": "When True, discard any cached compute session first\nso the code runs with no inherited SAS state (equivalent to\ncalling ``reset_compute_session`` immediately before)."
+          },
+          "html_results": {
+            "default": true,
+            "type": "boolean",
+            "description": "When True (the default), the output is also written\nas an HTML page, as SAS Data and AI Studio shows it, graphs\nincluded, and\nsaved so the person can open it in a browser. The code runs\nbetween an ``ods html5`` statement and its close, preceded by\n``;*';*\";*/;run;quit;`` so that an unterminated statement or\nquote cannot swallow the close; neither appears in the log.\nPass False to submit the code exactly as given."
+          }
+        },
+        "required": [
+          "goal",
+          "sas_code"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/sas-log/execute_sas_code.html"
+        }
+      }
+    },
+    {
+      "name": "list_compute_contexts",
+      "description": "List available compute contexts on the Viya environment.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer"
+          },
+          "start": {
+            "default": 0,
+            "type": "integer"
+          },
+          "filter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "reset_compute_session",
+      "description": "Reset (delete) the cached compute session for a compute context.\n\nThe server keeps one reusable SAS compute session per user and compute\ncontext so repeat calls skip the slow session spin-up; SAS state (WORK\ntables, macro variables, assigned librefs) therefore persists across\n``execute_sas_code`` and ``list_compute_*`` calls. Call this to discard\nthat state — the next compute tool call transparently creates a fresh\nsession.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "compute_context_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Compute context whose session to reset.\nDefaults to the server's configured execution context (the one\n``execute_sas_code`` uses)."
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_search",
+      "description": "Search the SAS Data Governance catalog for assets (tables, columns, reports, ...).\n\nThe catalog is a metadata index across the whole Viya environment, so this\nfinds assets without needing to know their server/library first. Each hit\nincludes the asset's ``resource_uri`` — the URI you can hand to the matching\ntool (e.g. get_report, get_castable_data) to act on the live asset — and an\n``attributes`` map with whatever metadata the catalog holds for it (commonly\n``library``, ``rowCount``, ``columnCount``, ``completenessPercent``,\n``reviewStatus``, ``informationPrivacy``, and ``analysisTimeStamp``).\n\nThe ``query`` uses the SAS catalog search grammar:\n  * Free text matches names, with wildcards ``*`` (0+ chars) and ``?`` (1 char): ``cust*``.\n  * Facets constrain fields, e.g. ``AssetType:Report``, ``Name:sales``,\n    ``Library.name:PUBLIC``, ``Column.informationPrivacy:Sensitive``.\n  * Ranges ``DateModified:[2024-01-01 TO 2024-12-31]`` and ``+`` to require a term.\n    Combine freely: ``AssetType:\"CAS Table\" +Name:cust*``.\nUse ``catalog_search_helper`` to discover valid facet names and values.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "query": {
+            "type": "string",
+            "description": "The catalog search query (see grammar above). Use ``*`` to match all names."
+          },
+          "indices": {
+            "default": "catalog",
+            "type": "string",
+            "description": "Comma-separated index name(s) to search (default 'catalog')."
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "description": "Maximum hits to return (default 20)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset of the first hit (default 0)."
+          }
+        },
+        "required": [
+          "goal",
+          "query"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_search_helper",
+      "description": "Discover how to search the catalog: list facets, or values for one facet.\n\nCall with no ``facet`` to list the available facets — the fields you can\nconstrain in a ``catalog_search`` query. Call with a ``facet`` name to get the\nsuggested/valid values for that facet (e.g. the asset types or review\nstatuses that actually exist). Use the results to build precise\n``catalog_search`` queries.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "facet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Facet name to get suggested values for (e.g. 'AssetType'). If\nomitted, returns the list of available facets instead."
+          },
+          "query": {
+            "default": "",
+            "type": "string",
+            "description": "Optional filter — when listing facets, matches facet names; when\nlisting values, matches value prefixes."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum entries to return (default 50)."
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_find_instance",
+      "description": "Resolve the catalog instance for a source-asset URI.\n\n``catalog_search`` finds assets by free text and facets, but the\nprofiling and download tools key off a catalog *instance id*. When you\nalready hold a resource URI — the ``resource_uri`` from a search hit, or\na CAS table path — this looks the instance up directly by ``resourceId``\n(the same filter the profiling workflow uses) and returns its id plus\nthe key profile attributes. Use it to tell at a glance whether the asset\nhas been profiled (``analysisTimeStamp``) and what semantic metadata it\ncarries (``informationPrivacy``, ``nlpTerms``, ``nlpTags``,\n``mostImportantFields``) before calling ``catalog_download_table_profile``.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "resource_uri": {
+            "type": "string",
+            "description": "Source URI of the asset (e.g.\n'/dataTables/dataSources/cas~fs~.../tables/MYTABLE')."
+          }
+        },
+        "required": [
+          "goal",
+          "resource_uri"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_list_agents",
+      "description": "List SAS Data Governance discovery agents.\n\nAgents crawl a data source (server/library) to discover assets and collect\ntheir metadata into the catalog. Use ``catalog_run_agent`` to start one and\n``catalog_get_agent_history`` to see what a run produced.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum agents to return (default 50)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset of the first agent (default 0)."
+          },
+          "filter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional name filter (substring match)."
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_run_agent",
+      "description": "Start a catalog discovery agent run (asynchronous).\n\nTriggers the agent to crawl its data source and populate/refresh catalog\nmetadata. The run is asynchronous — results are applied to the catalog in\nthe background; poll ``catalog_get_agent_history`` to track completion.\nNote: the Catalog API can only *start* an agent, not stop one already running.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "ID of the agent to run (see catalog_list_agents)."
+          }
+        },
+        "required": [
+          "goal",
+          "agent_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_get_agent_history",
+      "description": "Get the execution history of a catalog agent's runs.\n\nEach record reports a run's status and how much metadata it populated\n(tables enumerated/added/updated/removed), so you can confirm a run started\nby ``catalog_run_agent`` finished and what it changed.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "ID of the agent (see catalog_list_agents)."
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "description": "Maximum run records to return (default 20)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset of the first record (default 0)."
+          }
+        },
+        "required": [
+          "goal",
+          "agent_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_run_adhoc_analysis",
+      "description": "Submit an ad-hoc analysis (profiling) job for a table in the catalog.\n\nProfiles the table — computing the data dictionary, column statistics, and\ndata-quality metrics that ``catalog_download_table_profile`` returns. The job\nruns asynchronously and may take a while; poll ``catalog_get_adhoc_analysis``\nwith the returned job id until the profile is ready.\n\nThe three NLP job parameters are enabled by default — they drive the\nsemantic enrichment that populates an asset's ``informationPrivacy``,\n``nlpTerms``, ``nlpTags``, and ``mostImportantFields`` (the privacy and\nkeyword signals the catalog is most useful for). Leave them on unless you\nonly need a plain column profile and want the job to finish faster.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "resource_uri": {
+            "type": "string",
+            "description": "Source URI of the table to analyze (the ``resource_uri`` from\na catalog_search hit, e.g. '/dataTables/dataSources/cas~fs~.../tables/MYTABLE')."
+          },
+          "name": {
+            "type": "string",
+            "description": "A name for the analysis job."
+          },
+          "resource_type": {
+            "default": "",
+            "type": "string",
+            "description": "Catalog entity type of the resource. Defaults to\n'CASMEMTable' when the URI is a CAS table (contains 'cas~fs~');\npass it explicitly for other asset types."
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "description": "Optional description for the job."
+          },
+          "provider": {
+            "default": "TABLE-BOT",
+            "type": "string",
+            "description": "Job provider (default 'TABLE-BOT')."
+          },
+          "identify_language": {
+            "default": true,
+            "type": "boolean",
+            "description": "Detect each text column's language (default True)."
+          },
+          "analyze_sentiment": {
+            "default": true,
+            "type": "boolean",
+            "description": "Score sentiment on text columns (default True)."
+          },
+          "get_nlp_semantic_id": {
+            "default": true,
+            "type": "boolean",
+            "description": "Derive semantic types / privacy classification\n(informationPrivacy, nlpTerms, nlpTags) (default True)."
+          }
+        },
+        "required": [
+          "goal",
+          "resource_uri",
+          "name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_get_adhoc_analysis",
+      "description": "Get the status of an ad-hoc analysis job, and whether its profile is ready.\n\nThe job reaching a terminal ``status`` is *not* sufficient: the profile\nattributes are written onto the asset a little later, so a download fired\nthe instant the job completes can come back empty. To close that gap, when\nthe job carries a resource this also resolves the target catalog instance\nand reports ``profile_ready`` (the asset's ``analysisTimeStamp`` is\npopulated — the same gate ``catalog_download_table_profile`` uses) and\n``information_privacy`` (non-empty once the NLP semantic enrichment has\nlanded). Poll until ``profile_ready`` is true, then download.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "job_id": {
+            "type": "string",
+            "description": "The analysis job id returned by catalog_run_adhoc_analysis."
+          }
+        },
+        "required": [
+          "goal",
+          "job_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "catalog_download_table_profile",
+      "description": "Download a catalog table's data dictionary and profile as CSV.\n\nReturns the table's column metadata plus, by default, its profile (column\nstatistics and data-quality metrics). If the table has not been profiled yet,\nthis returns a recommendation to run ``catalog_run_adhoc_analysis`` (pre-filled\nwith the table's URI and type) instead of an empty profile.\n\nIdentify the table by either ``instance_id`` or ``resource_uri`` (give one).\nPassing ``resource_uri`` lets you run search → profile → download without ever\nhandling an instance id: the asset is resolved by ``resourceId`` the same way\n``catalog_find_instance`` does. ``instance_id`` takes precedence if both are given.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "instance_id": {
+            "default": "",
+            "type": "string",
+            "description": "Catalog instance id of the table (the ``id`` from a catalog_search hit)."
+          },
+          "resource_uri": {
+            "default": "",
+            "type": "string",
+            "description": "Source URI of the table (the ``resource_uri`` from a search hit,\ne.g. '/dataTables/dataSources/cas~fs~.../tables/MYTABLE'). Used when\n``instance_id`` is omitted."
+          },
+          "level": {
+            "default": "dataDictionaryAndProfile",
+            "type": "string",
+            "description": "Detail level — 'dataDictionaryAndProfile' (default; columns + profile),\n'detailedMetrics' (full per-column metrics), or 'dataDictionary'\n(column metadata only)."
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_compute_libraries",
+      "description": "List the SAS libraries (librefs) assigned in a compute context.\n\nRuns in the reusable per-user compute session for the context, so it\nalso sees libraries created by prior ``execute_sas_code`` calls.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "compute_context_name": {
+            "type": "string",
+            "description": "Name of the compute context (see list_compute_contexts)."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of libraries to return (default 50)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset of the first library to return (default 0)."
+          },
+          "filter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional name filter (substring match)."
+          }
+        },
+        "required": [
+          "goal",
+          "compute_context_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_compute_tables",
+      "description": "List the tables in a SAS library within a compute context.\n\nThese are SAS/Compute tables (e.g. WORK or an assigned libref), distinct\nfrom in-memory CAS tables (see list_castables). Runs in the reusable\nper-user compute session for the context.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "compute_context_name": {
+            "type": "string",
+            "description": "Name of the compute context (see list_compute_contexts)."
+          },
+          "library_name": {
+            "type": "string",
+            "description": "Name of the SAS library/libref (e.g. 'WORK', 'SASHELP')."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of tables to return (default 50)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset of the first table to return (default 0)."
+          },
+          "filter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional name filter (substring match)."
+          }
+        },
+        "required": [
+          "goal",
+          "compute_context_name",
+          "library_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_compute_columns",
+      "description": "List the columns of a table in a SAS library within a compute context.\n\nRuns in the reusable per-user compute session for the context.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "compute_context_name": {
+            "type": "string",
+            "description": "Name of the compute context (see list_compute_contexts)."
+          },
+          "library_name": {
+            "type": "string",
+            "description": "Name of the SAS library/libref (e.g. 'WORK', 'SASHELP')."
+          },
+          "table_name": {
+            "type": "string",
+            "description": "Name of the table within the library."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of columns to return (default 50)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Offset of the first column to return (default 0)."
+          },
+          "filter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional name filter (substring match)."
+          }
+        },
+        "required": [
+          "goal",
+          "compute_context_name",
+          "library_name",
+          "table_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_cas_servers",
+      "description": "List available CAS servers on the Viya environment.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_caslibs",
+      "description": "List CAS libraries (caslibs) available on a CAS server.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "server_id": {
+            "type": "string",
+            "description": "CAS server name or ID (e.g. 'cas-shared-default')."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of caslibs to return (default 50)."
+          }
+        },
+        "required": [
+          "goal",
+          "server_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_castables",
+      "description": "List tables in a CAS library.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "server_id": {
+            "type": "string",
+            "description": "CAS server name or ID."
+          },
+          "caslib_name": {
+            "type": "string",
+            "description": "Name of the caslib."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of tables to return (default 50)."
+          }
+        },
+        "required": [
+          "goal",
+          "server_id",
+          "caslib_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_source_tables",
+      "description": "List source tables that are NOT yet loaded into memory in a CAS library.\n\nThese are the candidates for ``promote_table_to_memory`` — tables that\nexist on the caslib's data source but are not in CAS memory yet.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "server_id": {
+            "type": "string",
+            "description": "CAS server name or ID."
+          },
+          "caslib_name": {
+            "type": "string",
+            "description": "Name of the caslib."
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "description": "Maximum number of tables to return (default 50)."
+          }
+        },
+        "required": [
+          "goal",
+          "server_id",
+          "caslib_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_castable_info",
+      "description": "Get metadata for a CAS table (row count, column count, size, etc.).",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "server_id": {
+            "type": "string",
+            "description": "CAS server name or ID."
+          },
+          "caslib_name": {
+            "type": "string",
+            "description": "Name of the caslib."
+          },
+          "table_name": {
+            "type": "string",
+            "description": "Name of the table."
+          }
+        },
+        "required": [
+          "goal",
+          "server_id",
+          "caslib_name",
+          "table_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_castable_columns",
+      "description": "Get column metadata for a CAS table (names, types, labels, formats).\n\nA missing table returns a structured ``not_found`` with the two usual\ncauses (unloaded source table vs session-scoped table) instead of a raw\nHTTP error.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "server_id": {
+            "type": "string",
+            "description": "CAS server name or ID."
+          },
+          "caslib_name": {
+            "type": "string",
+            "description": "Name of the caslib."
+          },
+          "table_name": {
+            "type": "string",
+            "description": "Name of the table."
+          },
+          "limit": {
+            "default": 200,
+            "type": "integer",
+            "description": "Maximum columns to return (default 200)."
+          }
+        },
+        "required": [
+          "goal",
+          "server_id",
+          "caslib_name",
+          "table_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_castable_data",
+      "description": "Fetch rows from a CAS table with column names.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "server_id": {
+            "type": "string",
+            "description": "CAS server name or ID."
+          },
+          "caslib_name": {
+            "type": "string",
+            "description": "Name of the caslib."
+          },
+          "table_name": {
+            "type": "string",
+            "description": "Name of the table."
+          },
+          "limit": {
+            "default": 100,
+            "type": "integer",
+            "description": "Maximum rows to return (default 100)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Row offset (default 0)."
+          }
+        },
+        "required": [
+          "goal",
+          "server_id",
+          "caslib_name",
+          "table_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/data-grid/get_castable_data.html"
+        }
+      }
+    },
+    {
+      "name": "get_compute_table_data",
+      "description": "Fetch rows from a table in a SAS library, with column names.\n\nThe compute-tier counterpart of ``get_castable_data``: a plain page of\nrows from ``libref.table`` as the session sees it, read through the\ncompute session's data API rather than by running SQL. Values arrive\nformatted the way SAS displays them (dates as text, numbers with their\nformat applied), which is what a person browsing a table expects; use\n``query_data`` with ``target='compute'`` when you need raw numerics,\na WHERE clause, or a join.\n\nRuns in the reusable per-user compute session for the context, so\nWORK tables from earlier ``execute_sas_code`` calls are visible.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "compute_context_name": {
+            "type": "string",
+            "description": "Name of the compute context (see list_compute_contexts)."
+          },
+          "library_name": {
+            "type": "string",
+            "description": "The libref, e.g. ``WORK`` or ``SASHELP``."
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The table within the library."
+          },
+          "limit": {
+            "default": 100,
+            "type": "integer",
+            "description": "Maximum rows to return (default 100)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Row offset for paging (default 0)."
+          }
+        },
+        "required": [
+          "goal",
+          "compute_context_name",
+          "library_name",
+          "table_name"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/data-grid/get_compute_table_data.html"
+        }
+      }
+    },
+    {
+      "name": "query_data",
+      "description": "Run a FedSQL SELECT against CAS or compute data and return the rows.\n\nOne SQL surface over both storage tiers, so exploring a caslib table and\na SAS library table use the same tool and the same dialect. The query\nruns in the reusable compute session; nothing is persisted — the result\nis materialised into session scratch, read back, and dropped.\n\n**Pick the tier with ``target``** — it selects the namespace, and the two\ncannot be mixed in one statement (a caslib table and a libref table\ncannot be joined; stage one side first with execute_sas_code):\n\n* ``target='cas'`` (default) — qualify as ``caslib.table``\n  (e.g. ``Public.HMEQ``); see list_caslibs / list_castables.\n* ``target='compute'`` — qualify as ``libref.table`` (e.g. ``WORK.SALES``);\n  see list_compute_libraries / list_compute_tables. **Concatenated\n  librefs — several directories under one name, which is what SASHELP\n  and MAPS are — are invisible to FedSQL**, because its BASE driver maps\n  one schema to one directory. Copy such a table into WORK first\n  (``data work.cars; set sashelp.cars; run;``) and query ``WORK.CARS``.\n\n**Dialect notes** (FedSQL, not PROC SQL): joins (inner/left/right/full/\ncross), subqueries, UNION, GROUP BY/HAVING/ORDER BY, and scalar functions\nwork. There is **no WITH/CTE** — use a derived table ``(select ...) \"t\"``\n— and **no MERGE**; express a merge as a join (a full join with COALESCE\ngives upsert semantics). Double-quote identifiers that are reserved words\nor contain spaces; SAS name literals (``'x'n``) are not FedSQL.\n\nRow capping is done by this tool, not by your SQL: any LIMIT you write is\nignored in favour of ``limit`` (a malformed LIMIT is silently discarded by\nCAS and would return the whole table). Add ORDER BY for stable paging.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
+          "query": {
+            "type": "string",
+            "description": "A single FedSQL SELECT statement. DDL/DML is refused — this\ntool only reads rows."
+          },
+          "target": {
+            "default": "cas",
+            "type": "string",
+            "description": "Which tier the identifiers refer to — ``cas`` (default) or\n``compute``."
+          },
+          "limit": {
+            "default": 100,
+            "type": "integer",
+            "description": "Maximum rows to return, 1..10000 (default 100)."
+          },
+          "start": {
+            "default": 0,
+            "type": "integer",
+            "description": "Row offset for paging (default 0)."
+          },
+          "create_view_name": {
+            "default": "",
+            "type": "string",
+            "description": "If set, the result includes ``create_view_sql`` —\nthe ``CREATE VIEW <name> AS <query>`` text for this query. It is\nreturned for you to run yourself, never executed here."
+          },
+          "compute_context_name": {
+            "default": "",
+            "type": "string",
+            "description": "Compute context to run in; defaults to the\nserver's configured execution context."
+          }
+        },
+        "required": [
+          "goal",
+          "query"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/data-grid/query_data.html"
+        }
+      }
+    }
+  ]
+}
