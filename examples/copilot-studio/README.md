@@ -11,6 +11,8 @@ Verified against Copilot Studio on 1 October 2026 with server 1.18.0, all tiers 
 
 Nothing else is special. The default OAuth sign-in is what Copilot Studio uses, `MCP_STATELESS_HTTP` can stay at its default (both modes were tested), and `MCP_TIERS` / `MCP_READ_ONLY` scope the tool list as they do for any client.
 
+**One deployment can serve Copilot Studio and Microsoft 365 Copilot together.** The settings the [declarative agent](../m365-copilot/README.md) needs — `MCP_OAUTH_CLIENT_SECRETS=true` and `MCP_STATELESS_HTTP=true` — do not disturb Copilot Studio: it still registers as a public client (`token_endpoint_auth_method: none`) and is given no secret, and the rename does not affect Microsoft 365 Copilot. All three settings together were tested against both clients.
+
 ```sh
 MCP_BASE_URL=https://sas-mcp.example.com
 MCP_TOOL_RENAME=catalog_=infocat_
