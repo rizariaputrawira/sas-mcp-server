@@ -7,6 +7,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "sas_code": {
             "type": "string",
             "description": "the SAS code snippet to be executed using the Viya Job Execution API Service"
@@ -23,8 +27,20 @@
           }
         },
         "required": [
+          "goal",
           "sas_code"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/sas-log/execute_sas_code.html"
+        }
       }
     },
     {
@@ -34,6 +50,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "limit": {
             "default": 50,
             "type": "integer"
@@ -53,7 +73,16 @@
             ],
             "default": null
           }
-        }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -63,6 +92,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "compute_context_name": {
             "anyOf": [
               {
@@ -75,7 +108,16 @@
             "default": null,
             "description": "Compute context whose session to reset.\nDefaults to the server's configured execution context (the one\n``execute_sas_code`` uses)."
           }
-        }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -85,6 +127,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "query": {
             "type": "string",
             "description": "The catalog search query (see grammar above). Use ``*`` to match all names."
@@ -106,8 +152,15 @@
           }
         },
         "required": [
+          "goal",
           "query"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -117,6 +170,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "facet": {
             "anyOf": [
               {
@@ -139,7 +196,16 @@
             "type": "integer",
             "description": "Maximum entries to return (default 50)."
           }
-        }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -149,14 +215,25 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "resource_uri": {
             "type": "string",
             "description": "Source URI of the asset (e.g.\n'/dataTables/dataSources/cas~fs~.../tables/MYTABLE')."
           }
         },
         "required": [
+          "goal",
           "resource_uri"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -166,6 +243,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "limit": {
             "default": 50,
             "type": "integer",
@@ -188,7 +269,16 @@
             "default": null,
             "description": "Optional name filter (substring match)."
           }
-        }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -198,14 +288,25 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "agent_id": {
             "type": "string",
             "description": "ID of the agent to run (see catalog_list_agents)."
           }
         },
         "required": [
+          "goal",
           "agent_id"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
       }
     },
     {
@@ -215,6 +316,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "agent_id": {
             "type": "string",
             "description": "ID of the agent (see catalog_list_agents)."
@@ -231,8 +336,15 @@
           }
         },
         "required": [
+          "goal",
           "agent_id"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -242,6 +354,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "resource_uri": {
             "type": "string",
             "description": "Source URI of the table to analyze (the ``resource_uri`` from\na catalog_search hit, e.g. '/dataTables/dataSources/cas~fs~.../tables/MYTABLE')."
@@ -282,9 +398,16 @@
           }
         },
         "required": [
+          "goal",
           "resource_uri",
           "name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
       }
     },
     {
@@ -294,14 +417,25 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "job_id": {
             "type": "string",
             "description": "The analysis job id returned by catalog_run_adhoc_analysis."
           }
         },
         "required": [
+          "goal",
           "job_id"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -311,6 +445,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "instance_id": {
             "default": "",
             "type": "string",
@@ -326,7 +464,16 @@
             "type": "string",
             "description": "Detail level — 'dataDictionaryAndProfile' (default; columns + profile),\n'detailedMetrics' (full per-column metrics), or 'dataDictionary'\n(column metadata only)."
           }
-        }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -336,6 +483,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "compute_context_name": {
             "type": "string",
             "description": "Name of the compute context (see list_compute_contexts)."
@@ -364,8 +515,15 @@
           }
         },
         "required": [
+          "goal",
           "compute_context_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -375,6 +533,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "compute_context_name": {
             "type": "string",
             "description": "Name of the compute context (see list_compute_contexts)."
@@ -407,9 +569,16 @@
           }
         },
         "required": [
+          "goal",
           "compute_context_name",
           "library_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -419,6 +588,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "compute_context_name": {
             "type": "string",
             "description": "Name of the compute context (see list_compute_contexts)."
@@ -455,10 +628,17 @@
           }
         },
         "required": [
+          "goal",
           "compute_context_name",
           "library_name",
           "table_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -467,7 +647,21 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {}
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -477,6 +671,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "server_id": {
             "type": "string",
             "description": "CAS server name or ID (e.g. 'cas-shared-default')."
@@ -488,8 +686,15 @@
           }
         },
         "required": [
+          "goal",
           "server_id"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -499,6 +704,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "server_id": {
             "type": "string",
             "description": "CAS server name or ID."
@@ -514,9 +723,16 @@
           }
         },
         "required": [
+          "goal",
           "server_id",
           "caslib_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -526,6 +742,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "server_id": {
             "type": "string",
             "description": "CAS server name or ID."
@@ -541,9 +761,16 @@
           }
         },
         "required": [
+          "goal",
           "server_id",
           "caslib_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -553,6 +780,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "server_id": {
             "type": "string",
             "description": "CAS server name or ID."
@@ -567,10 +798,17 @@
           }
         },
         "required": [
+          "goal",
           "server_id",
           "caslib_name",
           "table_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -580,6 +818,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "server_id": {
             "type": "string",
             "description": "CAS server name or ID."
@@ -599,10 +841,17 @@
           }
         },
         "required": [
+          "goal",
           "server_id",
           "caslib_name",
           "table_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
       }
     },
     {
@@ -612,6 +861,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "server_id": {
             "type": "string",
             "description": "CAS server name or ID."
@@ -636,10 +889,22 @@
           }
         },
         "required": [
+          "goal",
           "server_id",
           "caslib_name",
           "table_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/data-grid/get_castable_data.html"
+        }
       }
     },
     {
@@ -649,6 +914,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "compute_context_name": {
             "type": "string",
             "description": "Name of the compute context (see list_compute_contexts)."
@@ -673,10 +942,22 @@
           }
         },
         "required": [
+          "goal",
           "compute_context_name",
           "library_name",
           "table_name"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/data-grid/get_compute_table_data.html"
+        }
       }
     },
     {
@@ -686,6 +967,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Before the other arguments, state in ONE sentence WHY you are calling THIS specific tool for the user's current request — the underlying goal it serves."
+          },
           "query": {
             "type": "string",
             "description": "A single FedSQL SELECT statement. DDL/DML is refused — this\ntool only reads rows."
@@ -717,8 +1002,20 @@
           }
         },
         "required": [
+          "goal",
           "query"
         ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://sas-viya/data-grid/query_data.html"
+        }
       }
     }
   ]

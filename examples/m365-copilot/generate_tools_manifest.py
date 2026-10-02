@@ -19,19 +19,25 @@ The output defaults to ``appPackage/mcp-tools.json`` next to this script.
 Pinning tools takes three edits to ``ai-plugin.json``, not one: the tool names
 go in the manifest's ``functions`` array *and* the runtime's
 ``run_for_functions``, and their definitions go in ``mcp_tool_description``.
-This script prints the first two ready to paste, so nobody hand-lists 23 names.
+This script prints the first two ready to paste, so nobody hand-lists the names.
 
 Note: opt-in collection-mode telemetry (COLLECTION_MODE=true) injects a
 ``goal`` parameter into every tool schema, and that shows up here too. Match
 the setting to the deployment you are pinning tools for — the checked-in file
 was generated with collection mode off (the default).
 
-Note: tool *annotations* (``readOnlyHint`` and friends, which this server has
-advertised since 1.11.0) are deliberately left out. Plugin manifest schema 2.4
-says each pinned tool object contains ``name``, ``description`` and
-``inputSchema``, and that unrecognized properties SHOULD invalidate the whole
-document — so shipping annotations here risks the package, and buys nothing.
-Dynamic tool discovery reads them straight off the server, where they are.
+Note: each tool carries its *annotations* (``readOnlyHint`` and friends) and,
+where it has an interactive view, its ``_meta.ui`` binding — the same shape
+``tools/list`` returns. Plugin manifest schema 2.4 describes a pinned tool as
+``name``, ``description`` and ``inputSchema`` only, and an earlier version of
+this script left the rest out on that reading. Tested against Copilot, that
+was the wrong call: without the annotations Copilot asks for confirmation
+before *every* tool call, read-only ones included, and without ``_meta.ui`` no
+view is rendered. With them, a pinned list behaves like dynamic discovery.
+
+The view URI written here is the stable one (no version fingerprint), which
+every deployment also serves, so a pinned package does not lose its views when
+the server is upgraded.
 """
 
 import argparse
@@ -80,20 +86,27 @@ async def dump_tools() -> dict:
     from fastmcp import Client
 
     from sas_mcp_server.stdio_server import mcp
+    from sas_mcp_server.ui import resource_uri
 
     async with Client(mcp) as client:
         tools = await client.list_tools()
 
-    return {
-        "tools": [
-            {
-                "name": tool.name,
-                "description": tool.description or "",
-                "inputSchema": tool.input_schema,
-            }
-            for tool in tools
-        ]
-    }
+    pinned = []
+    for tool in tools:
+        entry = {
+            "name": tool.name,
+            "description": tool.description or "",
+            "inputSchema": tool.input_schema,
+        }
+        if tool.annotations is not None:
+            # camelCase, as on the wire: readOnlyHint, destructiveHint, ...
+            entry["annotations"] = tool.annotations.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            )
+        if (tool.meta or {}).get("ui"):
+            entry["_meta"] = {"ui": {**tool.meta["ui"], "resourceUri": resource_uri(tool.name)}}
+        pinned.append(entry)
+    return {"tools": pinned}
 
 
 def main() -> None:

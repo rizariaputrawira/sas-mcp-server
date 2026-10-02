@@ -17,8 +17,10 @@ Microsoft 365 Copilot                    SAS Viya MCP Server                SAS 
 - Copilot connects to the server's **streamable HTTP** endpoint (`/mcp`). Local stdio servers cannot be used — Microsoft 365 only reaches **remotely hosted** MCP servers over HTTPS.
 - On the first tool call, Copilot pops a sign-in window. The MCP server's built-in OAuth proxy sends the user through **SAS Logon**, so results always reflect that user's own Viya permissions — no shared service account.
 - The agent's tool list comes from the server at runtime (**dynamic tool discovery**), so what you expose is controlled server-side with `MCP_TIERS` / `MCP_READ_ONLY` — change the deployment's scope and the agent follows, with no repackaging. Copilot re-validates each changed tool definition before activating it.
-- Since 1.11.0 every tool also advertises **MCP tool annotations** (`readOnlyHint`, `destructiveHint`, …). Dynamic discovery reads them straight from the server; the pinned-tools file cannot carry them (see below).
-- Tools that return interactive UI widgets ([MCP apps](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps)) render inline in Copilot. This server returns text and structured JSON, so nothing here needs that — it is just a capability you would get for free if a tool grew one.
+- Every tool advertises **MCP tool annotations** (`readOnlyHint`, `destructiveHint`, …), and Copilot acts on them: a read-only tool runs after a one-time **Allow**, anything else shows its arguments with **Confirm** / **Cancel** first.
+- The server's **interactive views** ([MCP apps](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps)) render inline in Copilot: the data grid for table previews and query results (filter, paging, full screen) and the SAS log viewer for `execute_sas_code`. The log viewer's *Results* tab cannot embed the HTML results page inside Copilot's sandbox and offers **Open in browser** instead.
+
+Verified against Microsoft 365 Copilot on 2 October 2026 with server 1.18.0 and all tiers (92 tools): registration, sign-in, tool calls with and without confirmation, and both views, in dynamic and in pinned mode.
 
 ## Prerequisites
 
@@ -39,7 +41,10 @@ Copilot sees every tool the server exposes, and this server has 92 of them — f
 MCP_TIERS=0-1        # 24 tools: Compute & Code Execution + Data Discovery
 MCP_BASE_URL=https://sas-mcp.example.com   # the external HTTPS URL of the server
 MCP_OAUTH_CLIENT_SECRETS=true              # required for dynamic registration, see below
+MCP_STATELESS_HTTP=true                    # required: Copilot speaks only the sessionless protocol
 ```
+
+`MCP_STATELESS_HTTP=true` is not optional either. Copilot's runtime opens every turn with `server/discover` — the handshake of the sessionless 2026-07-28 protocol revision — and never sends `initialize`. The default stateful transport answers that with HTTP 400 (*Missing session ID*), which Copilot shows as a reply that never arrives.
 
 `MCP_OAUTH_CLIENT_SECRETS=true` is what lets Copilot register itself. Microsoft's registration service insists on a confidential client: it refuses a server whose OAuth metadata lists no secret-based method — *"The authorization server does not support client_secret_basic or client_secret_post token endpoint authentication methods"* — and then a registration that comes back without a `client_secret`. By default this server registers every client as a public one, which is what other MCP clients expect; the setting makes it issue (and then require) a secret for a client that asks.
 
@@ -145,14 +150,14 @@ Pinning is **three edits, not one**, and the first two are easy to miss: the too
 ]
 ```
 
-The checked-in `mcp-tools.json` holds the 23 tier 0–1 tools, generated from the actual server code — never hand-edit it. `--plugin-snippet` prints the two name arrays ready to paste, so nobody types 23 names by hand:
+The checked-in `mcp-tools.json` holds the 24 tier 0–1 tools, generated from the actual server code — never hand-edit it. `--plugin-snippet` prints the two name arrays ready to paste, so nobody types 24 names by hand:
 
 ```sh
 uv run python examples/m365-copilot/generate_tools_manifest.py --tiers 0-1 --plugin-snippet
 uv run python examples/m365-copilot/generate_tools_manifest.py --tiers 0-3 --read-only
 ```
 
-**Tool annotations are deliberately absent from the pinned file.** The server advertises `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` on every tool (1.11.0+), but plugin manifest schema 2.4 defines a pinned tool object as `name`, `description` and `inputSchema`, and states that unrecognized properties *should* invalidate the whole document. Shipping the annotations here would risk the package for no gain. Dynamic discovery reads them from the server, where they live.
+**The pinned file carries each tool's annotations and view binding, and it has to.** Plugin manifest schema 2.4 describes a pinned tool as `name`, `description` and `inputSchema`, and an earlier version of the generator kept to that. Against Copilot it is the wrong reading: a pinned tool without `readOnlyHint` is treated as consequential, so **every** call — listing caslibs included — stops for a **Confirm**, and without `_meta.ui` no view is rendered. With both in the file (verified with the definitions inline in `ai-plugin.json`), a pinned list behaves exactly like dynamic discovery. The view URIs written are the stable, un-fingerprinted ones every deployment serves, so the views survive a server upgrade.
 
 The Agents Toolkit can do the same job interactively: open `.vscode/mcp.json`, select **Start**, then **ATK: Fetch action from MCP** → `ai-plugin.json`, and pick the tools. It writes both arrays and the definitions for you.
 
@@ -196,6 +201,11 @@ Neither blocks sideloading today — the runtime does not enforce the published 
 - **Every call fails with 401 in static-OAuth mode.** The server isn't accepting raw Viya bearer tokens — set `ALLOW_RAW_BEARER=true`.
 - **Tool calls time out.** Keep demo queries small (the agent instructions already push for `LIMIT`ed previews); long-running SAS jobs are better served by the batch tools in tier 4.
 - **Copilot picks the wrong tool or rambles through many calls.** Narrow the server-side surface (`MCP_TIERS`), or switch to pinned tools with a curated subset.
+- **Provisioning fails at "Creating DCR configuration" with *"The authorization server does not support client_secret_basic or client_secret_post token endpoint authentication methods"*, or *"IDP registration response is missing required field: client_secret"*.** The server is registering every client as public — set `MCP_OAUTH_CLIENT_SECRETS=true` and restart it.
+- **The agent asks to connect, and then the reply never arrives.** Look for `POST /mcp` → `400` in the server log: that is `server/discover` being refused by the stateful transport. Set `MCP_STATELESS_HTTP=true`.
+- **The sign-in window says *Client Not Registered*.** Copilot is still serving the previous version of the agent, whose registration this server no longer knows (a re-provision, or a server whose OAuth store was reset). A republished agent takes several minutes to go live; start a new chat and try again.
+- **"Oops! Something happened" on every message, including ones that worked a minute ago.** Copilot's chat drops its connection while its browser tab is hidden or covered. Bring the tab to the front and retry before suspecting the server — nothing reaches the server in this case.
+- **Copilot asks to confirm every call, even read-only ones, or shows no views (pinned mode).** The pinned definitions were generated without annotations and `_meta` — regenerate `mcp-tools.json` and re-pin.
 - **A pinned tool list is stale after a server upgrade.** Regenerate `mcp-tools.json`, bump the app `version`, re-zip, re-upload. Dynamic discovery avoids this class of problem entirely.
 - **Pinned mode: the agent has an action but calls nothing.** The `functions` array or `run_for_functions` is still empty — `mcp_tool_description` alone does not declare the functions. Run the generator with `--plugin-snippet` and paste both arrays.
 

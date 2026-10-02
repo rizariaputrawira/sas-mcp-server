@@ -184,26 +184,43 @@ def check_tool_wiring() -> list[str]:
 
 
 def check_pinned_file() -> list[str]:
-    """The pinned file must match tools/list: name, description, inputSchema, nothing else."""
+    """The pinned file must match tools/list: name, description and inputSchema,
+    plus the annotations (and view binding) Copilot acts on.
+
+    Annotations are not decoration here. A pinned tool without ``readOnlyHint``
+    is treated as consequential, so Copilot asks the user to confirm every
+    call — verified against Copilot, as is that a pinned ``_meta.ui`` renders.
+    """
     path = PKG / "mcp-tools.json"
     if not path.is_file():
         return []
     tools = json.loads(path.read_text(encoding="utf-8"))["tools"]
-    allowed = {"name", "description", "inputSchema"}
+    required = {"name", "description", "inputSchema"}
+    allowed = required | {"annotations", "_meta"}
     extra = sorted({key for tool in tools for key in tool} - allowed)
-    incomplete = [t.get("name", "<unnamed>") for t in tools if not allowed <= set(t)]
+    incomplete = [t.get("name", "<unnamed>") for t in tools if not required <= set(t)]
+    unannotated = [t.get("name", "<unnamed>") for t in tools if "annotations" not in t]
 
     problems = []
     if extra:
         problems.append(
-            "mcp-tools.json carries properties outside name/description/inputSchema "
-            f"({', '.join(extra)}); schema 2.4 says unrecognized properties should "
-            "invalidate the document. Annotations belong on the server, not here."
+            "mcp-tools.json carries properties tools/list does not have "
+            f"({', '.join(extra)}); regenerate it with generate_tools_manifest.py."
         )
     if incomplete:
         problems.append(f"mcp-tools.json tools missing a required property: {', '.join(incomplete[:5])}")
+    if unannotated:
+        problems.append(
+            f"mcp-tools.json: {len(unannotated)} tool(s) without annotations "
+            f"({', '.join(unannotated[:5])}); Copilot will ask for confirmation "
+            "before each of them. Regenerate the file."
+        )
     if not problems:
-        print(f"ok   mcp-tools.json holds {len(tools)} tools in tools/list shape")
+        views = sum(1 for t in tools if "_meta" in t)
+        print(
+            f"ok   mcp-tools.json holds {len(tools)} tools in tools/list shape "
+            f"(annotated, {views} with a view)"
+        )
     return problems
 
 
