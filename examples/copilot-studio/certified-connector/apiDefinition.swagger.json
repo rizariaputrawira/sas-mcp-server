@@ -1,0 +1,74 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "SAS Viya MCP",
+    "description": "Gives Microsoft Copilot Studio agents tools for a SAS Viya environment through the SAS Viya MCP Server: discover CAS and library tables, profile columns, query data with FedSQL, and run SAS code. Every call runs as the signed-in SAS Viya user.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "SAS Technical Support",
+      "url": "https://support.sas.com",
+      "email": "support@sas.com"
+    }
+  },
+  "host": "sas-mcp.example.com",
+  "basePath": "/",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json",
+    "text/event-stream"
+  ],
+  "paths": {
+    "/mcp": {
+      "post": {
+        "operationId": "InvokeServer",
+        "summary": "SAS Viya MCP",
+        "description": "Sends a JSON-RPC 2.0 message to the SAS Viya MCP Server over Streamable HTTP. Microsoft Copilot Studio handles the MCP protocol; this operation is not meant to be called directly.",
+        "x-ms-agentic-protocol": "mcp-streamable-1.0",
+        "x-ms-visibility": "advanced",
+        "responses": {
+          "200": {
+            "description": "MCP Streamable HTTP response (JSON or text/event-stream)."
+          },
+          "400": {
+            "description": "Bad request."
+          },
+          "401": {
+            "description": "Unauthorized: the SAS Viya access token is missing, expired or not accepted by the server."
+          },
+          "500": {
+            "description": "Internal server error."
+          }
+        }
+      }
+    }
+  },
+  "definitions": {},
+  "parameters": {},
+  "responses": {},
+  "securityDefinitions": {},
+  "security": [],
+  "tags": [
+    {
+      "name": "SAS Viya MCP"
+    }
+  ],
+  "x-ms-connector-metadata": [
+    {
+      "propertyName": "Website",
+      "propertyValue": "https://github.com/sassoftware/sas-mcp-server"
+    },
+    {
+      "propertyName": "Privacy policy",
+      "propertyValue": "https://www.sas.com/en_us/legal/privacy-statement.html"
+    },
+    {
+      "propertyName": "Categories",
+      "propertyValue": "AI;Business Intelligence"
+    }
+  ]
+}

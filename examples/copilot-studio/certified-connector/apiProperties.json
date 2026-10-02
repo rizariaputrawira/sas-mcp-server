@@ -1,0 +1,97 @@
+{
+  "properties": {
+    "connectionParameters": {
+      "token": {
+        "type": "oauthSetting",
+        "oAuthSettings": {
+          "identityProvider": "oauth2generic",
+          "clientId": "{ClientId}",
+          "scopes": [
+            "openid"
+          ],
+          "redirectMode": "Global",
+          "redirectUrl": "https://global.consent.azure-apim.net/redirect",
+          "properties": {
+            "IsFirstParty": "False",
+            "IsOnbehalfofLoginSupported": false
+          },
+          "customParameters": {
+            "authorizationUrlTemplate": {
+              "value": "https://{ViyaHost}/SASLogon/oauth/authorize"
+            },
+            "tokenUrlTemplate": {
+              "value": "https://{ViyaHost}/SASLogon/oauth/token"
+            },
+            "refreshUrlTemplate": {
+              "value": "https://{ViyaHost}/SASLogon/oauth/token"
+            }
+          }
+        }
+      },
+      "token:McpServer": {
+        "type": "string",
+        "uiDefinition": {
+          "constraints": {
+            "tabIndex": 0,
+            "required": "true"
+          },
+          "displayName": "SAS Viya MCP Server address",
+          "description": "Host of your SAS Viya MCP Server, without https:// and without /mcp. Include the path prefix if the server is mounted under one.",
+          "tooltip": "For example sas-mcp.example.com, or viya.example.com/sas-mcp"
+        }
+      },
+      "token:ViyaHost": {
+        "type": "string",
+        "uiDefinition": {
+          "constraints": {
+            "tabIndex": 1,
+            "required": "true"
+          },
+          "displayName": "SAS Viya host",
+          "description": "Host of the SAS Viya environment the server is connected to, without https://. Sign-in happens there.",
+          "tooltip": "For example viya.example.com"
+        }
+      },
+      "token:ClientId": {
+        "type": "string",
+        "uiDefinition": {
+          "constraints": {
+            "tabIndex": 2,
+            "required": "true"
+          },
+          "displayName": "Client ID",
+          "description": "ID of the OAuth client your SAS Viya administrator registered for this connector.",
+          "tooltip": "The client ID registered in SAS Logon"
+        }
+      },
+      "token:ClientSecret": {
+        "type": "securestring",
+        "uiDefinition": {
+          "constraints": {
+            "tabIndex": 3,
+            "required": "true"
+          },
+          "displayName": "Client secret",
+          "description": "Secret of that OAuth client.",
+          "tooltip": "The client secret registered in SAS Logon"
+        }
+      }
+    },
+    "iconBrandColor": "#0378CD",
+    "capabilities": [],
+    "policyTemplateInstances": [
+      {
+        "templateId": "dynamichosturl",
+        "title": "Route to the customer's SAS Viya MCP Server",
+        "parameters": {
+          "x-ms-apimTemplateParameter.urlTemplate": "https://@connectionParameters('token:McpServer')",
+          "x-ms-apimTemplate-operationName": [
+            "InvokeServer"
+          ]
+        }
+      }
+    ],
+    "publisher": "SAS Institute Inc.",
+    "stackOwner": "SAS Institute Inc."
+  }
+}

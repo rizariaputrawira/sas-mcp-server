@@ -34,6 +34,10 @@ MCP_TOOL_RENAME=catalog_=infocat_
 
 The tool's entry on the Build tab lists every tool the server offers with a switch each, if you want the agent to see fewer than the server exposes.
 
+## Getting into the pre-populated list
+
+The steps above add the server to one agent. The **Model Context Protocol** and **Connector** lists in the *Add tool* dialog are fed by Power Platform connectors, and a server gets into them for every customer through Microsoft's [MCP server certification](https://learn.microsoft.com/en-us/microsoft-copilot-studio/mcp-server-certification): the service owner packages it as a connector and submits it in Partner Center. A draft of that package is in [certified-connector](certified-connector/README.md). It asks the person creating a connection for the address of their own server and SAS Viya environment, since every customer hosts their own. It has not been imported or submitted; its README lists what is still open.
+
 ## What to expect
 
 - **Each person signs in as themselves.** The connection uses *End user account* authentication, so results follow that person's SAS Viya permissions.
