@@ -6,7 +6,7 @@ The server can be used from Microsoft's Copilot products in two ways. Both talk 
 | --- | --- | --- |
 | **Where people use it** | In Microsoft 365 Copilot chat, as an agent next to their mail, files and meetings | Wherever the agent is published from Copilot Studio; tested in its own test chat |
 | **How you build it** | An app package (three JSON manifests and two icons), from the Agents Toolkit or the pre-built package here, sideloaded or rolled out from the Microsoft 365 admin center | In the browser: **Tools** → **Add** → **Model Context Protocol**, then paste the server URL. Nothing to package |
-| **Interactive views** | Rendered: the data grid and the SAS log viewer appear inline | Not rendered. Results are text, and `execute_sas_code` returns a link to its HTML results |
+| **MCP App Support** | Rendered: the data grid and the SAS log viewer appear inline | Not rendered. Results are text, and `execute_sas_code` returns a link to its HTML results |
 | **Model and orchestration** | Microsoft 365 Copilot's own orchestrator | The model you pick for the agent (tested with Claude Opus 5), alongside its other knowledge, topics and tools |
 | **Choosing tools** | On the server (`MCP_TIERS`, `MCP_READ_ONLY`), or a pinned subset in the package | On the server, or one switch per tool on the agent's **Build** tab |
 | **When the server's tools change** | Dynamic discovery picks the change up at run time; a pinned list needs a new package version | The tool list is cached per connector, so add the server again as a new MCP server entry |
