@@ -4,6 +4,8 @@ This example wraps the SAS Viya MCP Server as an **action inside a declarative a
 
 The result is a **"SAS Viya Analyst"** agent in the Copilot sidebar: users ask data questions in natural language, Copilot calls the MCP server's tools (list CAS tables, profile columns, run FedSQL queries, execute SAS code), and every user is authenticated against Viya as themselves.
 
+To add the server to a Copilot Studio agent instead, with nothing to package, see [copilot-studio](../copilot-studio/README.md); [microsoft-copilot.md](../microsoft-copilot.md) compares the two.
+
 ## How it fits together
 
 ```

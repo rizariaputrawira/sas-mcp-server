@@ -1,6 +1,6 @@
 # Microsoft Copilot Studio integration
 
-A Copilot Studio agent can use this server as a tool: the agent's model picks from the server's tools, and every call runs in SAS Viya as the person who signed in. This is the no-code route — nothing to package or sideload. For a declarative agent that lives in Microsoft 365 Copilot itself (and renders the interactive views), see [m365-copilot](../m365-copilot/README.md) instead.
+A Copilot Studio agent can use this server as a tool: the agent's model picks from the server's tools, and every call runs in SAS Viya as the person who signed in. This is the no-code route — nothing to package or sideload. For a declarative agent that lives in Microsoft 365 Copilot itself (and renders the interactive views), see [m365-copilot](../m365-copilot/README.md) instead; [microsoft-copilot.md](../microsoft-copilot.md) compares the two.
 
 Verified against Copilot Studio on 1 October 2026 with server 1.18.0, all tiers (92 tools), an agent on Claude Opus 5: sign-in, tool discovery and multi-step tool calls work.
 
