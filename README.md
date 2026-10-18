@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 92 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 93 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -167,7 +167,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 51 of the 92 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 52 of the 93 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -283,6 +283,7 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **list_files**: List files in the Viya Files Service
 - **upload_file**: Upload a file to the Viya Files Service, optionally into a Content folder (`parent_folder_uri`). Content comes from exactly one of `content` (inline text), `file_path` (read **server-side**, binary-safe — xlsx, zip, images — gated by `ALLOW_LOCAL_FILE_UPLOAD`), or `url` (server-side fetch)
 - **download_file**: Download file content
+- **find_folder**: Look up a SAS Content folder by path (`/Public/Content/Decisions`, `My Folder`, `My Folder/Risk`), ID or URI, and return its ID, URI, name and full path — for confirming a folder the user named, or getting the URI that `upload_file` and `MCP_DEFAULT_FOLDER` take
 
 #### Tier 3 — Reports & Visualization
 - **list_reports**: List Visual Analytics reports
@@ -318,6 +319,8 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 
 #### Tier 7 — Decisioning (SAS Intelligent Decisioning)
 Build and manage SAS Intelligent Decisioning rule sets and decision flows end to end, then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
+
+Rule sets and decision flows are always stored in a SAS Content folder. The create tools take a `folder` — a path such as `/Public/Content/Decisions`, `My Folder` or `My Folder/Risk`, a folder ID, or a folder URI — and fall back to the deployment's `MCP_DEFAULT_FOLDER`. With neither, they refuse and the model asks the user where to store the asset. An update leaves an asset in its folder; one created before folders were required is filed by its next update, into the folder given or the default. Every create and update result carries `folder`, with the path the asset is in.
 
 *Business rules — rule sets:*
 - **create_business_ruleset** / **update_business_ruleset** / **get_business_ruleset** / **list_business_rulesets** / **delete_business_ruleset**: Manage rule sets (the input/output signature the rules operate on)
@@ -614,7 +617,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 92 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 93 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most

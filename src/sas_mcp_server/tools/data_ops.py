@@ -14,6 +14,7 @@ from fastmcp import Context, FastMCP
 
 from ..config import MAX_UPLOAD_BYTES, SSL_VERIFY, VIYA_ENDPOINT
 from ..env import env_bool
+from ..helpers.folder_helpers import resolve_folder
 from ..viya_client import (
     contains_filter,
     get_json,
@@ -574,6 +575,24 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             )
             raise_for_viya_status(resp)
             return resp.json()
+
+    @mcp.tool()
+    async def find_folder(folder: str, ctx: Context) -> dict[str, str]:
+        """Look up a SAS Content folder and return its ID, URI, name and full path.
+
+        Use it to confirm a folder the user named before storing something
+        there, or to turn a path into the folder URI that ``upload_file`` and
+        the deployment's ``MCP_DEFAULT_FOLDER`` setting take. The tools that
+        create rule sets and decisions accept a path directly, so they do not
+        need this first.
+
+        Args:
+            folder: A folder path such as ``/Public/Content/Decisions``,
+                ``My Folder`` (or a folder below it, ``My Folder/Risk``), a
+                folder ID, or a folder URI (``/folders/folders/<id>``).
+        """
+        async with viya_session("find_folder", ctx) as client:
+            return await resolve_folder(client, folder)
 
     @mcp.tool()
     async def download_file(file_id: str, ctx: Context) -> str:

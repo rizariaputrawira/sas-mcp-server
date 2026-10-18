@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Rule sets and decision flows are always stored in a SAS Content folder.** `create_business_ruleset` and `create_decision_flow` sent no `parentFolderUri`, so everything they made belonged to no folder: it existed, but no folder view showed it, and it could not be found, shared or secured the way SAS Intelligent Decisioning users expect. Both tools now take a `folder` and fall back to the new `MCP_DEFAULT_FOLDER` (chart: `server.defaultFolder`). With neither, the call is refused before anything is created, with a message telling the model to ask the user for a folder; creating outside a folder is no longer possible. A folder can be given as a path from the root (`/Public/Content/Decisions`), as `My Folder` or a path below it (`My Folder/Risk`), as a folder ID, or as a folder URI (`/folders/folders/<id>`, `/folders/folders/@myFolder` included); a path is looked up with `POST /folders/paths`, a URI or ID is checked, and an unknown folder is refused with Viya's reason. `update_business_ruleset` and `update_decision_flow` never move an asset: one already in a folder stays there whatever `folder` says, and one created before this change is filed by its next update, into the folder given or the default — when neither is available the update still succeeds and says how to file it. Every create and update result carries `folder` (`id`, `uri`, `name`, the full `path`, and for updates a `status` of `unchanged`, `filed` or `none`). Callers that relied on creating without a folder must now pass one or set `MCP_DEFAULT_FOLDER`. Chart 0.6.0 for the new value.
+
+### Added
+- **`find_folder`** (Tier 2, read-only) looks up a SAS Content folder from the same references and returns its ID, URI, name and full path — to confirm a folder the user named before storing something there, or to get the URI that `upload_file` and `MCP_DEFAULT_FOLDER` take. The resolution itself is a shared helper (`helpers/folder_helpers.py`), so the decisioning tools accept paths without this tool and work whichever tiers are enabled.
+
 ## [1.18.0] - 2026-09-28
 
 ### Added

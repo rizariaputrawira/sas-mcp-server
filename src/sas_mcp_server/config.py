@@ -144,6 +144,14 @@ MCP_APPS = env_bool("MCP_APPS", True)
 # ``initialize`` handshake keeps working either way. Costs a fresh transport per
 # request, which is why it is not the default.
 MCP_STATELESS_HTTP = env_bool("MCP_STATELESS_HTTP", False)
+# Default SAS Content folder for the assets the tools create (default: none).
+# Rule sets and decision flows are always stored in a folder: the one a call
+# names, else this one. With neither, the tool refuses and tells the model to
+# ask the user for a folder. Accepts a folder URI (/folders/folders/<id>, or
+# /folders/folders/@myFolder for each person's own My Folder), a folder ID, or
+# a path such as /Public/Content/Decisions. Resolved per call, with the
+# caller's own permissions. See sas_mcp_server.helpers.folder_helpers.
+MCP_DEFAULT_FOLDER = os.getenv("MCP_DEFAULT_FOLDER", "").strip()
 
 _mcp_base_url = os.getenv("MCP_BASE_URL", "").strip()
 # An empty value is the documented .env.sample default. Also ignore values

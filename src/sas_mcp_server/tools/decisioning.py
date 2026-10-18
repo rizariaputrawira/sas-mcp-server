@@ -1,7 +1,13 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tier 7 — Decisioning tools (SAS Business Rules & Intelligent Decisioning)."""
+"""Tier 7 — Decisioning tools (SAS Business Rules & Intelligent Decisioning).
+
+Rule sets and decision flows are always stored in a SAS Content folder: the
+one the call names, else the deployment's ``MCP_DEFAULT_FOLDER``. With neither,
+the create tools refuse and ask for one. See
+:mod:`sas_mcp_server.helpers.folder_helpers`.
+"""
 
 import asyncio
 import json
@@ -12,6 +18,7 @@ from fastmcp import Context, FastMCP
 from pydantic import BeforeValidator
 
 from ..config import VIYA_ENDPOINT
+from ..helpers.folder_helpers import keep_in_folder, resolve_target_folder
 from ..viya_client import (
     contains_filter,
     delete_resource,
@@ -27,6 +34,9 @@ from ._common import coerce_json_list, make_session_helpers
 # Tolerant alias for list params some MCP clients deliver as JSON-encoded
 # strings (see _common.coerce_json_list). The published schema is unchanged.
 DictListParam = Annotated[list[dict[str, Any]], BeforeValidator(coerce_json_list)]
+
+RULE_SET_CONTENT_TYPE = "ruleSet"
+DECISION_CONTENT_TYPE = "decision"
 
 
 def _build_decision_flow_body(
@@ -68,12 +78,21 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
     @mcp.tool()
     async def create_business_ruleset(
-        name: str, signature: DictListParam, ctx: Context, description: str | None = None
+        name: str,
+        signature: DictListParam,
+        ctx: Context,
+        description: str | None = None,
+        folder: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new SAS Business Rules rule set.
+        """Create a new SAS Business Rules rule set in a SAS Content folder.
 
         A rule set with no rules cannot be used in a decision flow — follow up
         with ``create_business_rule`` to populate it.
+
+        The rule set is always stored in a folder. Without ``folder`` it goes to
+        the deployment's default folder; when there is none, the call is refused
+        and you should ask the user which folder to use. The result's ``folder``
+        says where it was stored.
 
         Args:
             name: Rule set name (max 30 chars).
@@ -82,29 +101,55 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 decimal, integer, date, datetime, dataGrid, boolean, any;
                 direction one of input, output, inOut.
             description: Optional description.
+            folder: Where to store the rule set: a folder path such as
+                ``/Public/Content/Decisions``, ``My Folder`` (or a folder below
+                it, ``My Folder/Risk``), a folder ID, or a folder URI
+                (``/folders/folders/<id>``). Omit to use the default folder.
         """
         body = {"name": name, "description": description, "signature": signature}
         async with viya_session("create_business_ruleset", ctx) as client:
-            return await post_json("/businessRules/ruleSets", client, body=body)
+            target = await resolve_target_folder(client, folder, "rule set")
+            result = await post_json(
+                "/businessRules/ruleSets", client, body=body, params={"parentFolderUri": target["uri"]}
+            )
+            result["folder"] = target
+            return result
 
     @mcp.tool()
     async def update_business_ruleset(
-        ruleset_id: str, name: str, signature: DictListParam, ctx: Context, description: str | None = None
+        ruleset_id: str,
+        name: str,
+        signature: DictListParam,
+        ctx: Context,
+        description: str | None = None,
+        folder: str | None = None,
     ) -> dict[str, Any]:
         """Update an existing SAS Business Rules rule set's name/description/signature.
 
         Changing the signature can invalidate existing rules that reference
         removed variables — check with ``get_business_ruleset`` first if unsure.
 
+        The rule set stays in its folder. One that is in no folder (created
+        before folders were required) is filed into ``folder``, or the default
+        folder. The result's ``folder`` says where the rule set is.
+
         Args:
             ruleset_id: The existing rule set UUID (not its name — list_business_rulesets returns both).
             name: Rule set name (max 30 chars).
             signature: Input/output/inOut variables the rules operate on.
             description: Optional description.
+            folder: Only used when the rule set is in no folder yet: a folder
+                path, ``My Folder``, a folder ID or a folder URI to file it in.
         """
         body = {"name": name, "description": description, "signature": signature}
+        uri = f"/businessRules/ruleSets/{ruleset_id}"
         async with viya_session("update_business_ruleset", ctx) as client:
-            return await put_json(f"/businessRules/ruleSets/{ruleset_id}", client, body)
+            result = await put_json(uri, client, body)
+            result["folder"] = await keep_in_folder(
+                client, asset_uri=uri, name=name, content_type=RULE_SET_CONTENT_TYPE,
+                folder=folder, what="rule set",
+            )
+            return result
 
     @mcp.tool()
     async def get_business_ruleset(ruleset_id: str, ctx: Context) -> dict[str, Any]:
@@ -329,8 +374,14 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         rule_set_steps: DictListParam,
         ctx: Context,
         description: str | None = None,
+        folder: str | None = None,
     ) -> dict[str, Any]:
         """Create a new SAS Intelligent Decisioning flow chaining rule set steps.
+
+        The decision is always stored in a SAS Content folder. Without
+        ``folder`` it goes to the deployment's default folder; when there is
+        none, the call is refused and you should ask the user which folder to
+        use. The result's ``folder`` says where it was stored.
 
         Args:
             name: Decision name (max 60 chars).
@@ -346,10 +397,19 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 A term produced as output by an earlier step can be consumed
                 as input by a later step via a shared signature entry.
             description: Optional description.
+            folder: Where to store the decision: a folder path such as
+                ``/Public/Content/Decisions``, ``My Folder`` (or a folder below
+                it, ``My Folder/Risk``), a folder ID, or a folder URI
+                (``/folders/folders/<id>``). Omit to use the default folder.
         """
         body = _build_decision_flow_body(name, signature, rule_set_steps, description)
         async with viya_session("create_decision_flow", ctx) as client:
-            return await post_json("/decisions/flows", client, body=body)
+            target = await resolve_target_folder(client, folder, "decision")
+            result = await post_json(
+                "/decisions/flows", client, body=body, params={"parentFolderUri": target["uri"]}
+            )
+            result["folder"] = target
+            return result
 
     @mcp.tool()
     async def update_decision_flow(
@@ -359,11 +419,16 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         rule_set_steps: DictListParam,
         ctx: Context,
         description: str | None = None,
+        folder: str | None = None,
     ) -> dict[str, Any]:
         """Update an existing SAS Intelligent Decisioning flow.
 
         Pass ALL rule set steps (existing + new) — the full flow is replaced
         on update, it is not a partial patch.
+
+        The decision stays in its folder. One that is in no folder (created
+        before folders were required) is filed into ``folder``, or the default
+        folder. The result's ``folder`` says where the decision is.
 
         Args:
             decision_id: The existing decision flow UUID (not its name — list_decision_flows returns both).
@@ -372,10 +437,18 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             rule_set_steps: Ordered list of rule set steps (see
                 ``create_decision_flow`` for the shape).
             description: Optional description.
+            folder: Only used when the decision is in no folder yet: a folder
+                path, ``My Folder``, a folder ID or a folder URI to file it in.
         """
         body = _build_decision_flow_body(name, signature, rule_set_steps, description)
+        uri = f"/decisions/flows/{decision_id}"
         async with viya_session("update_decision_flow", ctx) as client:
-            return await put_json(f"/decisions/flows/{decision_id}", client, body)
+            result = await put_json(uri, client, body)
+            result["folder"] = await keep_in_folder(
+                client, asset_uri=uri, name=name, content_type=DECISION_CONTENT_TYPE,
+                folder=folder, what="decision",
+            )
+            return result
 
     @mcp.tool()
     async def get_decision_flow(decision_id: str, ctx: Context) -> dict[str, Any]:

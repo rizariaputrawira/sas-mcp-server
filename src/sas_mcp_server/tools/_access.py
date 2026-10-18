@@ -74,6 +74,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         # Tier 2 — Data Operations & Files
         "list_files",
         "download_file",
+        "find_folder",
         # Tier 3 — Reports & Visualization
         "list_reports",
         "get_report",

@@ -39,10 +39,10 @@ server:
   # Advertised to MCP clients during the initialize handshake.
   name: SAS Viya Execution MCP Server
   port: 8134
-  # Tool tiers to expose, e.g. "0-4" or "0,1,7". Empty = all 92 tools.
+  # Tool tiers to expose, e.g. "0-4" or "0,1,7". Empty = all 93 tools.
   tiers: ""
   # Expose only tools that neither change server-side state nor cause
-  # server-side work (51 of 92). Composes with `tiers`.
+  # server-side work (52 of 93). Composes with `tiers`.
   readOnly: false
   # Interactive views (MCP Apps) for the data, SAS log and glossary tools,
   # rendered by clients that support the extension (which ones, and how they
@@ -53,6 +53,11 @@ server:
   # only the sessionless 2026-07-28 protocol revision, such as claude.ai's
   # custom-connector backend; the legacy handshake works either way.
   statelessHttp: false
+  # SAS Content folder for the rule sets and decision flows the tools create
+  # when a call names none: a folder URI, ID or path. "/folders/folders/@myFolder"
+  # means each person's own My Folder. Empty = no default: the tools ask the
+  # user for a folder, since these assets are always stored in one.
+  defaultFolder: ""
   # Timeout in seconds for every SAS Viya REST call the tools make. Generous by
   # default because compute sessions can be slow to start; lower it to fail
   # fast behind a proxy that drops idle connections.

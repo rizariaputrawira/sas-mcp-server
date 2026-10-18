@@ -22,6 +22,9 @@ data:
   MCP_APPS: {{ .Values.server.apps | quote }}
   MCP_STATELESS_HTTP: {{ .Values.server.statelessHttp | quote }}
   VIYA_CLIENT_TIMEOUT: {{ .Values.server.clientTimeout | quote }}
+  {{- with .Values.server.defaultFolder }}
+  MCP_DEFAULT_FOLDER: {{ . | quote }}
+  {{- end }}
   {{- /* toString, NOT `with`: Go templates treat the integer 0 as false, so
          `--set server.tiers=0` would drop this key entirely and the server
          would fall back to registering EVERY tier. */}}
