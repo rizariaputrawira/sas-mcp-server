@@ -1367,6 +1367,157 @@ async def test_decisioning_folder_placement(integration_mcp_server, viya_token, 
 
 
 # -----------------------------------------------------------------------
+# Decisioning content (trees, code files, value lists, functions, flows)
+# -----------------------------------------------------------------------
+
+
+async def test_decisioning_content_workflow(integration_mcp_server, viya_token):
+    """Every decisioning content tool once, in a scratch folder below My Folder:
+    custom function -> value list -> segmentation trees (written and from a table)
+    -> code files (DS2, Python, SQL) -> revisions, copy, code -> a decision built from
+    shorthand steps -> everything deleted again."""
+    try:
+        # Collections answer application/json for flows and rule sets (the tree listing does not).
+        await _viya_get(viya_token, "/businessRules/ruleSets", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
+    folder_name = f"mcp_test_content_{_SUFFIX}"
+    folder = await _viya_post(
+        viya_token, "/folders/folders", {"name": folder_name, "type": "folder"},
+        params={"parentFolderUri": "/folders/folders/@myFolder"},
+    )
+    target = f"/folders/folders/{folder['id']}"
+    created: list[tuple[str, str]] = []  # (asset_type, id), deleted in reverse
+    signature = [
+        {"name": "score", "dataType": "decimal", "direction": "input"},
+        {"name": "band", "dataType": "string", "direction": "output"},
+    ]
+    function_code = (
+        "method mcp_test_band_" + _SUFFIX + "(double score) returns varchar(10);\n"
+        "   if score >= 630 then return 'LOW'; return 'HIGH';\nend;"
+    )
+
+    async def tool(name, args):
+        result = await client.call_tool(name, args)
+        return result.data if result.data is not None else result.content[0].text
+
+    async with Client(integration_mcp_server) as client:
+        try:
+            # custom function, validation
+            broken = function_code.replace("return 'HIGH';", "return 'HIGH'")
+            check = await tool("validate_custom_function", {"code": broken})
+            assert check["valid"] is False and check["errors"]
+            function = await tool("create_custom_function", {
+                "code": function_code, "category": f"mcp_test_cat_{_SUFFIX}", "description": "integration test"})
+            created += [("function_category", function["category"]["id"]), ("custom_function", function["id"])]
+            updated_fn = await tool("update_custom_function", {"function_id": function["id"], "description": "changed"})
+            assert updated_fn["description"] == "changed"
+            expression = await tool("validate_decision_expression", {
+                "expression": "score * 2 >= 1260", "signature": signature[:1]})
+            assert expression["valid"] is True
+            bad = await tool("validate_decision_expression", {"expression": "score * ", "signature": signature[:1]})
+            assert bad["valid"] is False and bad["errors"]
+
+            # value list
+            value_list = await tool("create_value_list", {
+                "name": f"mcp_test_bands_{_SUFFIX}", "data_type": "numeric", "folder": target,
+                "entries": [{"key": "v>=630", "label": "630 and above"}]})
+            created.append(("value_list", value_list["id"]))
+            entries = await tool("update_value_list_entries", {
+                "value_list_id": value_list["id"], "entries": ["v>=630", "600<=v<630", "v<600"]})
+            assert [e["key"] for e in entries["entries"]] == ["v>=630", "600<=v<630", "v<600"]
+
+            # a written tree, then an update
+            tree = await tool("create_segmentation_tree", {
+                "name": f"mcp_test_tree_{_SUFFIX}", "folder": target, "signature": signature,
+                "node": {"variable": "score", "valueNodes": [{"value": ">=630", "outcome": "low"},
+                                                             {"value": "Other", "outcome": "high"}]},
+                "outcomes": [{"name": "low", "assign": {"band": "LOW"}}, {"name": "high", "assign": {"band": "HIGH"}}]})
+            created.append(("segmentation_tree", tree["id"]))
+            assert tree["folder"]["id"] == folder["id"]
+            changed = await tool("update_segmentation_tree", {"tree_id": tree["id"], "description": "changed"})
+            assert changed["description"] == "changed" and changed["folder"]["status"] == "unchanged"
+
+            # a tree from a strategy table, with value lists
+            from_table = await tool("create_segmentation_tree_from_table", {
+                "name": f"mcp_test_strategy_{_SUFFIX}", "folder": target, "key_columns": ["Score"],
+                "outcome_columns": ["Band"], "create_value_lists": True,
+                "rows": [{"Score": 0, "Band": "HIGH"}, {"Score": 600, "Band": "MID"}, {"Score": 630, "Band": "LOW"}]})
+            created.append(("segmentation_tree", from_table["id"]))
+            created += [("value_list", v["id"]) for v in from_table["value_lists"]]
+            assert from_table["report"]["leaves"] == 3
+
+            # code files of every type
+            ds2 = await tool("create_code_file", {
+                "name": f"mcp test ds2 {_SUFFIX}", "code_type": "ds2", "folder": target,
+                "description": "integration test",
+                "code": 'package "${PACKAGE_NAME}" /inline;\n method execute(double score, in_out varchar band);\n'
+                        "   if score >= 630 then band = 'LOW'; else band = 'HIGH';\n end;\nendpackage;\n"})
+            created.append(("code_file", ds2["id"]))
+            assert ds2["name"] == f"mcp test ds2 {_SUFFIX}" and ds2["description"] == "integration test"
+            python = await tool("create_code_file", {
+                "name": f"mcp test py {_SUFFIX}", "code_type": "python", "folder": target,
+                "code": "def execute(score):\n   'Output: band'\n"
+                        "   return 'LOW' if score and score >= 630 else 'HIGH'\n",
+                "signature": signature})
+            created.append(("code_file", python["id"]))
+            assert {t["name"]: t["dataType"] for t in python["signature"]} == {"score": "decimal", "band": "string"}
+            sql = await tool("create_code_file", {
+                "name": f"mcp test sql {_SUFFIX}", "code_type": "sql", "folder": target,
+                "code": "select count(*) as {:n:integer} from \"T\" where x = {?:score:decimal}"})
+            created.append(("code_file", sql["id"]))
+            renamed = await tool("update_code_file", {"code_file_id": sql["id"], "description": "changed"})
+            assert renamed["description"] == "changed"
+
+            # revisions, code, listing, copy
+            tree_ref = {"asset_type": "segmentation_tree", "asset_id": tree["id"]}
+            locked = await tool("lock_decisioning_asset_revision", tree_ref)
+            assert locked["locked_revision"]["locked"] is True
+            revisions = await tool("list_decisioning_asset_revisions", tree_ref)
+            assert any(r["id"] == locked["locked_revision"]["id"] for r in revisions)
+            code = await tool("get_decisioning_asset_code", {"asset_type": "segmentation_tree", "asset_id": tree["id"]})
+            assert "_double_value" in code
+            read = await tool("get_decisioning_asset", {"asset_type": "code_file", "asset_id": ds2["id"]})
+            assert "method execute" in read["code"] and read["folder"]["id"] == folder["id"]
+            listed = await tool("list_decisioning_assets", {"asset_type": "segmentation_tree", "filter_name": _SUFFIX})
+            assert {tree["id"], from_table["id"]} <= {t["id"] for t in listed}
+            copy = await tool("copy_decisioning_asset", {
+                "asset_type": "segmentation_tree", "asset_id": tree["id"], "name": f"mcp_test_tree_copy_{_SUFFIX}",
+                "folder": target})
+            created.append(("segmentation_tree", copy["id"]))
+
+            # a decision from shorthand steps
+            decision = await tool("create_decision_flow", {
+                "name": f"mcp_test_steps_{_SUFFIX}", "folder": target,
+                "signature": signature + [{"name": "path", "dataType": "string", "direction": "output"}],
+                "steps": [
+                    {"type": "assignment", "assignments": {"path": "START"}},
+                    {"type": "segmentation_tree", "id": tree["id"]},
+                    {"type": "code_file", "id": ds2["id"]},
+                    {"type": "branch", "variable": "score", "cases": [
+                        {"label": "high", "min": 630,
+                         "steps": [{"type": "assignment", "assignments": {"path": "HIGH"}}]}]},
+                    {"type": "condition", "expression": "band = 'LOW'",
+                     "on_true": [{"type": "assignment", "assignments": {"path": "LOW"}}], "on_false": []},
+                ]})
+            created.append(("decision", decision["id"]))
+            report = decision["steps_report"]
+            assert report["unmapped_inputs"] == [] and report["warnings"] == []
+            assert any(s["asset_type"] == "code_file" for s in report["locked_for_this_flow"])
+        finally:
+            async with Client(integration_mcp_server) as cleanup_client:
+                for asset_type, asset_id in reversed(created):
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool(
+                            "delete_decisioning_asset", {"asset_type": asset_type, "asset_id": asset_id}
+                        )
+            with contextlib.suppress(Exception):
+                await _viya_delete(viya_token, f"{target}?recursive=true")
+
+
+# -----------------------------------------------------------------------
 # Cancel Job Workflow
 # -----------------------------------------------------------------------
 
@@ -1776,6 +1927,24 @@ TOOL_COVERAGE = {
     "get_decision_flow_revision": "test_business_rules_and_decisions_workflow",
     "publish_decision_flow": "test_business_rules_and_decisions_workflow",
     "get_mas_module_step_signature": "test_business_rules_and_decisions_workflow",
+    "list_decisioning_assets": "test_decisioning_content_workflow",
+    "get_decisioning_asset": "test_decisioning_content_workflow",
+    "get_decisioning_asset_code": "test_decisioning_content_workflow",
+    "list_decisioning_asset_revisions": "test_decisioning_content_workflow",
+    "lock_decisioning_asset_revision": "test_decisioning_content_workflow",
+    "copy_decisioning_asset": "test_decisioning_content_workflow",
+    "delete_decisioning_asset": "test_decisioning_content_workflow",
+    "create_segmentation_tree": "test_decisioning_content_workflow",
+    "update_segmentation_tree": "test_decisioning_content_workflow",
+    "create_segmentation_tree_from_table": "test_decisioning_content_workflow",
+    "create_code_file": "test_decisioning_content_workflow",
+    "update_code_file": "test_decisioning_content_workflow",
+    "create_value_list": "test_decisioning_content_workflow",
+    "update_value_list_entries": "test_decisioning_content_workflow",
+    "create_custom_function": "test_decisioning_content_workflow",
+    "update_custom_function": "test_decisioning_content_workflow",
+    "validate_custom_function": "test_decisioning_content_workflow",
+    "validate_decision_expression": "test_decisioning_content_workflow",
     "list_compute_contexts": "test_compute_discovery_workflow",
     "list_compute_libraries": "test_compute_discovery_workflow",
     "list_compute_tables": "test_compute_discovery_workflow",

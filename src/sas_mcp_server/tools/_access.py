@@ -103,6 +103,10 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "get_decision_flow_code",
         "list_decision_flow_revisions",
         "get_decision_flow_revision",
+        "list_decisioning_assets",
+        "get_decisioning_asset",
+        "get_decisioning_asset_code",
+        "list_decisioning_asset_revisions",
         # Tier 9 — Business Glossary
         "list_glossary_term_types",
         "get_glossary_term_type",
@@ -166,6 +170,22 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "delete_decision_flow",
         "lock_decision_flow_revision",
         "publish_decision_flow",
+        "lock_decisioning_asset_revision",
+        "copy_decisioning_asset",
+        "delete_decisioning_asset",
+        "create_segmentation_tree",
+        "update_segmentation_tree",
+        "create_segmentation_tree_from_table",
+        "create_code_file",
+        "update_code_file",
+        "create_value_list",
+        "update_value_list_entries",
+        "create_custom_function",
+        "update_custom_function",
+        # Both compile DS2 in a SAS session to answer: no state changes, but
+        # server-side work, which the strict definition excludes.
+        "validate_custom_function",
+        "validate_decision_expression",
         # Tier 9
         "create_glossary_term",
         "update_glossary_term",
@@ -204,6 +224,11 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "update_business_ruleset",  # PUT replaces the rule set's content
         "update_business_rule",  # PUT replaces the rule's content
         "update_decision_flow",  # PUT replaces the full flow
+        "delete_decisioning_asset",
+        "update_segmentation_tree",  # node / outcomes replace the tree's structure
+        "update_code_file",  # new code replaces the working revision's code
+        "update_value_list_entries",  # replaces the entries
+        "update_custom_function",  # new code changes every rule set that calls it
         "apply_report_operations",  # operations can remove pages/objects
         "create_report",  # on_conflict="replace" can overwrite a report
         "copy_report",  # result_name_conflict="replace" likewise
@@ -233,6 +258,13 @@ IDEMPOTENT_WRITE_TOOLS: frozenset[str] = frozenset(
         "update_business_ruleset",
         "update_business_rule",
         "update_decision_flow",
+        "update_segmentation_tree",
+        "update_code_file",
+        "update_value_list_entries",
+        "update_custom_function",
+        "delete_decisioning_asset",
+        "validate_custom_function",
+        "validate_decision_expression",
         "delete_report",
         "delete_business_ruleset",
         "delete_business_rule",

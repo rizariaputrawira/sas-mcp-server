@@ -2003,7 +2003,8 @@ async def test_lock_business_ruleset_revision_request(mcp_server_with_mock_clien
     async with Client(mcp) as client:
         await client.call_tool("lock_business_ruleset_revision", {"ruleset_id": "rs-1"})
 
-    get_headers = mock_client.get.call_args[1]["headers"]
+    # first GET reads the rule set with its rules; a revision listing follows the POST
+    get_headers = mock_client.get.call_args_list[0][1]["headers"]
     assert get_headers["Accept"] == "application/vnd.sas.business.rule.set.integral+json"
     post_url = mock_client.post.call_args[0][0]
     assert "/businessRules/ruleSets/rs-1/revisions" in post_url
@@ -2256,7 +2257,7 @@ async def test_lock_decision_flow_revision_request(mcp_server_with_mock_client):
 
     post_url = mock_client.post.call_args[0][0]
     assert "/decisions/flows/dec-1/revisions" in post_url
-    sent_body = mock_client.post.call_args[1]["json"]
+    sent_body = json.loads(mock_client.post.call_args[1]["content"])
     assert sent_body["flow"]["steps"] == [{"type": "application/vnd.sas.decision.step.ruleset"}]
 
 

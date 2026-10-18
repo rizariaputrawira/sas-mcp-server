@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 93 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 111 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -167,7 +167,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 52 of the 93 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 56 of the 111 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -318,7 +318,7 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **score_data**: Score data against a published model or decision
 
 #### Tier 7 — Decisioning (SAS Intelligent Decisioning)
-Build and manage SAS Intelligent Decisioning rule sets and decision flows end to end, then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
+Build SAS Intelligent Decisioning content end to end — rule sets, custom functions, segmentation trees, value lists, code files (DS2, Python, SQL) and decision flows that combine them with models, branches, conditions and assignments — then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
 
 Rule sets and decision flows are always stored in a SAS Content folder. The create tools take a `folder` — a path such as `/Public/Content/Decisions`, `My Folder` or `My Folder/Risk`, a folder ID, or a folder URI — and fall back to the deployment's `MCP_DEFAULT_FOLDER`. With neither, they refuse and the model asks the user where to store the asset. An update leaves an asset in its folder; one created before folders were required is filed by its next update, into the folder given or the default. Every create and update result carries `folder`, with the path the asset is in.
 
@@ -335,6 +335,24 @@ Rule sets and decision flows are always stored in a SAS Content folder. The crea
 - **get_decision_flow_code**: Retrieve the generated DS2 execution code for a flow
 - **lock_decision_flow_revision** / **list_decision_flow_revisions** / **get_decision_flow_revision**: Lock, list, and fetch immutable decision revisions
 - **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**)
+
+**create_decision_flow** and **update_decision_flow** take `steps`, in which each step names what it is and the server wires it: `{"type": "rule_set" | "segmentation_tree" | "code_file" | "decision", "id": ...}` (a sub-decision is a `decision`), `{"type": "model", "id": <model repository id>}`, `{"type": "assignment", "assignments": {"band": "GOLD"}}`, `{"type": "condition", "expression": "score >= 630", "on_true": [...], "on_false": [...]}` and `{"type": "branch", "branch_type": "range" | "equals" | "like", ...}`. A referenced object's newest locked revision is used (one is locked if there is none); step terms map to same-named decision variables, and a term the decision has none for is added as a variable of its type and direction, because Intelligent Decisioning validates and publishes a step only when every term is mapped. Mappings never cross type families. `rule_set_steps` still works for rule-set-only flows. The result's `steps_report` lists the revisions used, the variables added and anything to check.
+
+*Content — one life cycle for every kind:* `asset_type` is `rule_set`, `decision`, `segmentation_tree`, `code_file`, `value_list`, `custom_function` or `function_category`.
+- **list_decisioning_assets** / **get_decisioning_asset** / **delete_decisioning_asset**: List, read (with the folder it is in; a rule set with its rules, a code file with its code, a value list with its entries; content over 150,000 characters is summarised) and delete any of them
+- **get_decisioning_asset_code**: The DS2 Viya generates for a rule set, decision or segmentation tree, or a code file's source
+- **list_decisioning_asset_revisions** / **lock_decisioning_asset_revision**: Revisions of rule sets, decisions, segmentation trees and code files. Locking freezes the current state and opens the next revision; the result says which revision was locked
+- **copy_decisioning_asset**: Copy a rule set (with its rules), decision, segmentation tree, code file or value list into a folder
+
+*Segmentation trees:*
+- **create_segmentation_tree** / **update_segmentation_tree**: Write a tree: nodes test a variable against values (`"A;B"`), comparisons (`">=630"`), ranges (`"600<=v<630"`) or `"Other"`, in order; outcomes assign variables or run DS2. An update replaces only the parts given
+- **create_segmentation_tree_from_table**: Build one tree from a strategy table — one row per branch, a column per decision key — as FICO-style exports (TRIAD, Blaze) describe a strategy. Keys are tested in column order and only where they split; values are range lower bounds (`split="lower_bound"`) or exact values. Reads inline rows, a CSV, or a CAS table (load an Excel sheet with **upload_data**), can create a value list per variable, and reports leaves, outcomes and any rows whose path is identical but whose outcome differs
+
+*Value lists, code files and custom functions:*
+- **create_value_list** / **update_value_list_entries**: Value lists of values or numeric ranges (`"v>=630"`); a version in production is left alone and a new version takes the entries
+- **create_code_file** / **update_code_file**: DS2, Python or SQL code files; Viya reads the signature from the code, and `signature` supplies the types Python cannot state
+- **create_custom_function** / **update_custom_function**: DS2 custom functions that rule expressions call, checked to compile first; a category named but missing is created
+- **validate_custom_function** / **validate_decision_expression**: Compile a function or a DS2 expression (a rule condition or action, a branch, a condition step) and return the compiler's error lines
 
 #### Tier 8 — Workbench (Execute Code Only)
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output), plus a link to the [HTML results](#html-results) unless `html_results=false`. Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
@@ -617,7 +635,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 93 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 111 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most

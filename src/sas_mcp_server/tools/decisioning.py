@@ -7,6 +7,11 @@ Rule sets and decision flows are always stored in a SAS Content folder: the
 one the call names, else the deployment's ``MCP_DEFAULT_FOLDER``. With neither,
 the create tools refuse and ask for one. See
 :mod:`sas_mcp_server.helpers.folder_helpers`.
+
+The tier's other content — segmentation trees, code files, value lists, custom
+functions, validation, and life-cycle tools for every kind — is registered from
+:mod:`sas_mcp_server.tools.decisioning_content`. Decision flows take every step
+kind through :mod:`sas_mcp_server.helpers.decision_flow_helpers`.
 """
 
 import asyncio
@@ -18,6 +23,8 @@ from fastmcp import Context, FastMCP
 from pydantic import BeforeValidator
 
 from ..config import VIYA_ENDPOINT
+from ..helpers import decisioning_assets as assets
+from ..helpers.decision_flow_helpers import build_steps
 from ..helpers.folder_helpers import keep_in_folder, resolve_target_folder
 from ..viya_client import (
     contains_filter,
@@ -30,6 +37,7 @@ from ..viya_client import (
     return_items,
 )
 from ._common import coerce_json_list, make_session_helpers
+from .decisioning_content import register_content_tools
 
 # Tolerant alias for list params some MCP clients deliver as JSON-encoded
 # strings (see _common.coerce_json_list). The published schema is unchanged.
@@ -69,6 +77,27 @@ def _build_decision_flow_body(
         "signature": signature,
         "flow": {"steps": steps},
     }
+
+
+async def _flow_body(
+    client: Any,
+    name: str,
+    signature: list[dict[str, Any]],
+    steps: list[dict[str, Any]] | None,
+    rule_set_steps: list[dict[str, Any]] | None,
+    description: str | None,
+    add_missing_variables: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The request body for a decision flow, and the steps report when ``steps`` was used."""
+    if (steps is None) == (rule_set_steps is None):
+        raise ValueError(
+            "Give the flow as exactly one of steps (any step kind) or rule_set_steps (rule sets only)."
+        )
+    if rule_set_steps is not None:
+        return _build_decision_flow_body(name, signature, rule_set_steps, description), None
+    built, report = await build_steps(client, steps, signature, add_missing_variables=add_missing_variables)
+    body = {"name": name, "description": description or "", "signature": signature, "flow": {"steps": built}}
+    return body, report
 
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
@@ -201,6 +230,11 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         set into a decision flow — call again after editing rules if a
         decision needs to pick up the changes.
 
+        Viya locks the revision that was current and opens the next one: the
+        result describes that new working revision, as before, and
+        ``locked_revision`` the frozen one — use its ``id`` as the versionId
+        for a reference that later edits cannot change.
+
         The revision-creation request replaces the rule set's full content
         from the body sent, so this fetches the rule set with its rules
         included (``application/vnd.sas.business.rule.set.integral+json``)
@@ -212,28 +246,9 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             revision_type: "minor" for iterative changes, "major" for a
                 significant/approved milestone (default "minor").
         """
-        integral_type = "application/vnd.sas.business.rule.set.integral+json"
         async with viya_session("lock_business_ruleset_revision", ctx) as client:
-            get_resp = await client.get(
-                f"{VIYA_ENDPOINT}/businessRules/ruleSets/{ruleset_id}",
-                headers={"Accept": integral_type},
-            )
-            raise_for_viya_status(get_resp)
-            current = get_resp.json()
-            body = {
-                "name": current["name"],
-                "description": current.get("description"),
-                "signature": current.get("signature"),
-                "rules": current.get("rules"),
-            }
-            resp = await client.post(
-                f"{VIYA_ENDPOINT}/businessRules/ruleSets/{ruleset_id}/revisions",
-                params={"revisionType": revision_type},
-                content=json.dumps(body).encode(),
-                headers={"Content-Type": integral_type},
-            )
-            raise_for_viya_status(resp)
-            return resp.json()
+            locked = await assets.lock_revision(client, "rule_set", ruleset_id, revision_type)
+            return {**locked["working"], "locked_revision": locked["locked_revision"]}
 
     @mcp.tool()
     async def list_business_ruleset_revisions(
@@ -371,12 +386,18 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     async def create_decision_flow(
         name: str,
         signature: DictListParam,
-        rule_set_steps: DictListParam,
         ctx: Context,
+        steps: DictListParam | None = None,
+        rule_set_steps: DictListParam | None = None,
         description: str | None = None,
         folder: str | None = None,
+        add_missing_variables: bool = True,
     ) -> dict[str, Any]:
-        """Create a new SAS Intelligent Decisioning flow chaining rule set steps.
+        """Create a SAS Intelligent Decisioning flow: rule sets, segmentation trees, code files,
+        models, sub-decisions, assignments, conditions and branches.
+
+        Give the flow as ``steps`` (every step kind, wired by name — see the
+        argument) or, as before, ``rule_set_steps`` (rule sets only, wired by hand).
 
         The decision is always stored in a SAS Content folder. Without
         ``folder`` it goes to the deployment's default folder; when there is
@@ -388,6 +409,22 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             signature: Flow-level input/output variables, each ``{"name",
                 "direction", "dataType"}`` — direction input or output;
                 dataType string, decimal, integer, date, datetime, boolean.
+            steps: The flow, in order — any step kind. Each step is one of
+                ``{"type": "rule_set" | "segmentation_tree" | "code_file" | "decision",
+                "id": ..., "revision": ..., "mappings": {...}}`` (a sub-decision is
+                type decision), ``{"type": "model", "id": <model repository id>}``,
+                ``{"type": "assignment", "name": ..., "assignments": {"var": value}}``
+                (constants written plainly — ``"GOLD"``, ``720``; an assignment does
+                not evaluate expressions, compute in a rule set or code file),
+                ``{"type": "condition", "expression": "score >= 630", "on_true": [...],
+                "on_false": [...]}``, or ``{"type": "branch", "branch_type": "range" |
+                "equals" | "like", "variable": ..., "cases": [{"label", "min", "max" |
+                "value" | "pattern", "steps": [...]}], "default": [...]}``. ``revision``
+                defaults to the newest locked revision (one is locked if there is
+                none); "working" uses the editable one. Mappings default to
+                same-named decision variables; ``{"step term": "decision variable"}``
+                renames. The result's ``steps_report`` lists the revisions used and
+                any step input nothing maps to.
             rule_set_steps: Ordered list of rule set steps to execute in
                 sequence, each ``{"ruleSetId", "versionId", "mappings"}`` —
                 versionId is a locked rule set revision (see
@@ -401,14 +438,30 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 ``/Public/Content/Decisions``, ``My Folder`` (or a folder below
                 it, ``My Folder/Risk``), a folder ID, or a folder URI
                 (``/folders/folders/<id>``). Omit to use the default folder.
+            add_missing_variables: With ``steps``, add a decision variable for every
+                step term none matches (default true): Intelligent Decisioning
+                validates a step only when all its terms are mapped. The result's
+                ``steps_report.variables_added`` lists them.
         """
-        body = _build_decision_flow_body(name, signature, rule_set_steps, description)
         async with viya_session("create_decision_flow", ctx) as client:
-            target = await resolve_target_folder(client, folder, "decision")
+            if steps is None:
+                # rule_set_steps are checked locally, so report a bad step before a missing folder
+                body, report = await _flow_body(
+                    client, name, signature, steps, rule_set_steps, description, add_missing_variables
+                )
+                target = await resolve_target_folder(client, folder, "decision")
+            else:
+                # building steps can lock revisions, so only once the folder is known to be usable
+                target = await resolve_target_folder(client, folder, "decision")
+                body, report = await _flow_body(
+                    client, name, signature, steps, rule_set_steps, description, add_missing_variables
+                )
             result = await post_json(
                 "/decisions/flows", client, body=body, params={"parentFolderUri": target["uri"]}
             )
             result["folder"] = target
+            if report is not None:
+                result["steps_report"] = report
             return result
 
     @mcp.tool()
@@ -416,15 +469,17 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         decision_id: str,
         name: str,
         signature: DictListParam,
-        rule_set_steps: DictListParam,
         ctx: Context,
+        steps: DictListParam | None = None,
+        rule_set_steps: DictListParam | None = None,
         description: str | None = None,
         folder: str | None = None,
+        add_missing_variables: bool = True,
     ) -> dict[str, Any]:
         """Update an existing SAS Intelligent Decisioning flow.
 
-        Pass ALL rule set steps (existing + new) — the full flow is replaced
-        on update, it is not a partial patch.
+        Pass ALL steps (existing + new), as ``steps`` or ``rule_set_steps`` —
+        the full flow is replaced on update, it is not a partial patch.
 
         The decision stays in its folder. One that is in no folder (created
         before folders were required) is filed into ``folder``, or the default
@@ -434,16 +489,23 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             decision_id: The existing decision flow UUID (not its name — list_decision_flows returns both).
             name: Decision name (max 60 chars).
             signature: Flow-level input/output variables.
+            steps: The whole flow, every step kind (see ``create_decision_flow``).
             rule_set_steps: Ordered list of rule set steps (see
                 ``create_decision_flow`` for the shape).
             description: Optional description.
             folder: Only used when the decision is in no folder yet: a folder
                 path, ``My Folder``, a folder ID or a folder URI to file it in.
+            add_missing_variables: With ``steps``, add a decision variable for every
+                step term none matches (default true; see ``create_decision_flow``).
         """
-        body = _build_decision_flow_body(name, signature, rule_set_steps, description)
         uri = f"/decisions/flows/{decision_id}"
         async with viya_session("update_decision_flow", ctx) as client:
+            body, report = await _flow_body(
+                client, name, signature, steps, rule_set_steps, description, add_missing_variables
+            )
             result = await put_json(uri, client, body)
+            if report is not None:
+                result["steps_report"] = report
             result["folder"] = await keep_in_folder(
                 client, asset_uri=uri, name=name, content_type=DECISION_CONTENT_TYPE,
                 folder=folder, what="decision",
@@ -507,19 +569,16 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
         Call after a successful create/update to freeze the approved state as
         a point-in-time snapshot referenceable by ``publish_decision_flow``.
+        Viya locks the revision that was current and opens the next one: the
+        result describes that new working revision, as before, and
+        ``locked_revision`` the frozen one.
 
         Args:
             decision_id: The decision flow UUID (not its name — list_decision_flows returns both).
         """
         async with viya_session("lock_decision_flow_revision", ctx) as client:
-            current = await get_json(f"/decisions/flows/{decision_id}", client)
-            body = {
-                "name": current["name"],
-                "description": current.get("description"),
-                "signature": current.get("signature"),
-                "flow": current.get("flow"),
-            }
-            return await post_json(f"/decisions/flows/{decision_id}/revisions", client, body=body)
+            locked = await assets.lock_revision(client, "decision", decision_id)
+            return {**locked["working"], "locked_revision": locked["locked_revision"]}
 
     @mcp.tool()
     async def list_decision_flow_revisions(
@@ -659,3 +718,5 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
 
             published["moduleState"] = "pending"
             return published
+
+    register_content_tools(mcp, viya_session)
