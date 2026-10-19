@@ -36,7 +36,8 @@ from .http_debug import install_http_debug
 from .landing import LandingPageMiddleware, ServerFacts, collect_facts
 from .prompts import register_prompts
 from .telemetry import install_telemetry
-from .tools import register_tools
+from .tool_rename import install_tool_rename
+from .tools import TOOL_TIERS, register_tools
 from .user_log import install_user_log
 from .viya_client import announce_startup, logger
 from .viya_utils import shutdown_session_cache
@@ -91,9 +92,13 @@ else:
         "VIYA_AUTH=false: SASLogon authentication is disabled; Viya API calls are sent without Authorization headers"
     )
 mcp = FastMCP(SERVER_NAME, **_mcp_kwargs)
-# Opt-in telemetry (no-op unless COLLECTION_MODE is enabled). Added FIRST so it
-# is the OUTERMOST middleware — it wraps AuthMiddleware and the tool, so an auth
-# failure is recorded as status="error" and re-raised unchanged.
+# Opt-in tool renaming (no-op unless MCP_TOOL_RENAME is set). Added before
+# everything else so it is the outermost middleware: a call under a public
+# name is translated back before telemetry, auth or the tool see it.
+_tool_rename = install_tool_rename(mcp)
+# Opt-in telemetry (no-op unless COLLECTION_MODE is enabled). Added ahead of
+# auth so it wraps AuthMiddleware and the tool: an auth failure is recorded as
+# status="error" and re-raised unchanged.
 install_telemetry(mcp, "http")
 install_http_debug()
 if AUTH_ENABLED:
@@ -119,6 +124,9 @@ async def _http_get_token(ctx: Context) -> str:
 # Register all tools and prompts. Each tool call logs the Viya user it runs
 # as (see user_log).
 register_tools(mcp, install_user_log(mcp, _http_get_token))
+if _tool_rename is not None:
+    # Now that the names exist: stop here if the rename cannot work.
+    _tool_rename.bind(TOOL_TIERS)
 register_prompts(mcp)
 
 # The path FastMCP mounts the MCP transport on ("/mcp" unless overridden via
@@ -137,6 +145,7 @@ async def _landing_facts() -> ServerFacts:
         auth_enabled=AUTH_ENABLED,
         allow_raw_bearer=ALLOW_RAW_BEARER,
         read_only=MCP_READ_ONLY,
+        public_name=_tool_rename.public_name if _tool_rename is not None else None,
     )
 
 
