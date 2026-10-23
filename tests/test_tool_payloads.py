@@ -2305,6 +2305,9 @@ async def test_publish_decision_flow_request(mcp_server_with_mock_client):
     get_urls = [c.args[0] for c in mock_client.get.call_args_list]
     assert any("/decisions/flows/dec-1/revisions/rev-1/code" in u for u in get_urls)
     assert any("/microanalyticScore/jobs/job-1" in u for u in get_urls)
+    code_call = next(c for c in mock_client.get.call_args_list if c.args[0].endswith("/code"))
+    # CAS code (the default target) reads lookup tables as CAS formats, which MAS refuses.
+    assert code_call.kwargs["params"] == {"codeTarget": "microAnalyticService"}
 
     post_url = mock_client.post.call_args[0][0]
     assert "/modelPublish/models" in post_url

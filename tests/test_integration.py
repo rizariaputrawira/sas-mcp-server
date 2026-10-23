@@ -1517,6 +1517,126 @@ async def test_decisioning_content_workflow(integration_mcp_server, viya_token):
                 await _viya_delete(viya_token, f"{target}?recursive=true")
 
 
+async def test_lookup_table_workflow(integration_mcp_server, viya_token):
+    """A lookup table end to end, in a scratch folder below My Folder: create and
+    activate -> a rule set that tests and reads it (named, resolved to its ID) -> a
+    decision published to MAS and scored -> new entries activated, which the published
+    decision uses without being published again -> rollback, republish, copy -> the
+    delete refused while a rule set uses the table -> everything deleted again."""
+    try:
+        await _viya_get(viya_token, "/referenceData/domains", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
+    folder = await _viya_post(
+        viya_token, "/folders/folders", {"name": f"mcp_test_lookup_{_SUFFIX}", "type": "folder"},
+        params={"parentFolderUri": "/folders/folders/@myFolder"},
+    )
+    target = f"/folders/folders/{folder['id']}"
+    name = f"mcp_test_countries_{_SUFFIX}"
+    created: list[tuple[str, str]] = []  # (asset_type, id), deleted in reverse
+    published: dict = {}
+    signature = [
+        {"name": "country", "dataType": "string", "direction": "input"},
+        {"name": "risk", "dataType": "string", "direction": "output"},
+        {"name": "listed", "dataType": "string", "direction": "output"},
+    ]
+
+    async def tool(tool_name, args):
+        result = await client.call_tool(tool_name, args)
+        return result.data if result.data is not None else result.content[0].text
+
+    async def score(module_id, country):
+        result = await tool("score_data", {"module_id": module_id, "step_id": "execute",
+                                           "input_data": {"country": country}})
+        return {o["name"]: o.get("value") for o in result["outputs"]}
+
+    async with Client(integration_mcp_server) as client:
+        try:
+            lookup = await tool("create_lookup_table", {
+                "name": name, "folder": target, "entries": {"Iran": "High", "Cuba": "High"},
+                "key_label": "Country", "value_label": "Risk", "activate": True})
+            created.append(("lookup_table", lookup["id"]))
+            assert lookup["activation"]["outcome"] == "active" and lookup["folder"]["id"] == folder["id"]
+            read = await tool("get_lookup_table", {"lookup_table": name})
+            assert read["active_version"] == "1.0" and read["entry_count"] == 2 and read["used_by"] == []
+
+            ruleset = await tool("create_business_ruleset", {
+                "name": f"mcp_test_lookup_rs_{_SUFFIX}"[:30], "signature": signature, "folder": target})
+            created.append(("rule_set", ruleset["id"]))
+            rule = await tool("create_business_rule", {
+                "ruleset_id": ruleset["id"], "name": "listed_country", "conditional": "if",
+                "rule_fired_tracking_enabled": True,
+                "conditions": [{"type": "lookup", "term": signature[0], "lookup": name}],
+                "actions": [
+                    {"type": "assignment", "term": signature[2], "expression": "'Y'"},
+                    {"type": "lookupValue", "term": signature[1], "expression": "country", "lookup": name},
+                ]})
+            assert "problems" not in rule
+            assert rule["conditions"][0]["lookup"]["id"] == lookup["id"]
+            for _ in range(10):  # the relationships service records the use a few seconds later
+                used = await tool("get_lookup_table", {"lookup_table": lookup["id"], "limit": 1})
+                if used["used_by"]:
+                    break
+                await asyncio.sleep(3)
+            assert [u["id"] for u in used["used_by"]] == [ruleset["id"]] and used["next_start"] == 1
+            refused = await client.call_tool(
+                "delete_decisioning_asset", {"asset_type": "lookup_table", "asset_id": lookup["id"]},
+                raise_on_error=False)
+            assert refused.is_error and ruleset["id"] in refused.content[0].text
+
+            decision = await tool("create_decision_flow", {
+                "name": f"mcp_test_lookup_decision_{_SUFFIX}", "folder": target, "signature": signature,
+                "steps": [{"type": "rule_set", "id": ruleset["id"]}]})
+            created.append(("decision", decision["id"]))
+            locked = await tool("lock_decision_flow_revision", {"decision_id": decision["id"]})
+            published = await tool("publish_decision_flow", {
+                "decision_id": decision["id"], "revision_id": locked["locked_revision"]["id"],
+                "publish_name": f"mcp_test_lookup_{_SUFFIX}", "poll_timeout": 120})
+            assert published["moduleState"] == "completed", published.get("moduleErrors")
+            module = published["moduleId"]
+            assert await score(module, "Iran") == {"listed": "Y", "risk": "High"}
+            assert (await score(module, "Germany"))["listed"] is None
+
+            changed = await tool("update_lookup_table", {
+                "lookup_table": lookup["id"], "set_entries": {"Germany": "Low"}, "remove_keys": ["Cuba", "Nowhere"],
+                "activate": True})
+            assert changed["new_version"] is True and changed["activation"]["outcome"] == "active"
+            assert changed["changes"]["not_found"] == ["Nowhere"] and changed["entry_count"] == 2
+            # The published decision reads the newly active entries: nothing was published again.
+            assert await score(module, "Germany") == {"listed": "Y", "risk": "Low"}
+            assert (await score(module, "Cuba"))["listed"] is None
+
+            rollback = await tool("activate_lookup_table", {"lookup_table": lookup["id"], "version": "1.0"})
+            assert rollback["outcome"] == "active" and rollback["started_from"] == "1.0"
+            assert (await score(module, "Cuba"))["risk"] == "High"
+            again = await tool("activate_lookup_table", {"lookup_table": lookup["id"], "republish": True})
+            assert again["outcome"] == "republished"
+
+            listed = await tool("list_decisioning_assets", {"asset_type": "lookup_table", "filter_name": _SUFFIX})
+            assert lookup["id"] in {i["id"] for i in listed}
+            copy = await tool("copy_decisioning_asset", {
+                "asset_type": "lookup_table", "asset_id": lookup["id"], "name": f"{name}_copy", "folder": target})
+            created.append(("lookup_table", copy["id"]))
+            assert copy["entry_count"] == 2
+        finally:
+            async with Client(integration_mcp_server) as cleanup_client:
+                for asset_type, asset_id in reversed(created):
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool(
+                            "delete_decisioning_asset", {"asset_type": asset_type, "asset_id": asset_id}
+                        )
+            if published.get("moduleId"):
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/microanalyticScore/modules/{published['moduleId']}")
+            if published.get("id"):
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/modelPublish/models/{published['id']}")
+            with contextlib.suppress(Exception):
+                await _viya_delete(viya_token, f"{target}?recursive=true")
+
+
 # -----------------------------------------------------------------------
 # Cancel Job Workflow
 # -----------------------------------------------------------------------
@@ -1941,6 +2061,10 @@ TOOL_COVERAGE = {
     "update_code_file": "test_decisioning_content_workflow",
     "create_value_list": "test_decisioning_content_workflow",
     "update_value_list_entries": "test_decisioning_content_workflow",
+    "get_lookup_table": "test_lookup_table_workflow",
+    "create_lookup_table": "test_lookup_table_workflow",
+    "update_lookup_table": "test_lookup_table_workflow",
+    "activate_lookup_table": "test_lookup_table_workflow",
     "create_custom_function": "test_decisioning_content_workflow",
     "update_custom_function": "test_decisioning_content_workflow",
     "validate_custom_function": "test_decisioning_content_workflow",

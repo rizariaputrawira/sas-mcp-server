@@ -5,8 +5,9 @@
 
 Rule sets, decisions, segmentation trees and code files share a life cycle:
 they live in a folder, are read and listed the same way, freeze their state as
-revisions, and generate code. Value lists, custom functions and function
-categories share the reading, listing and deleting. :data:`ASSET_KINDS` states
+revisions, and generate code. Value lists, lookup tables, custom functions and
+function categories share the reading, listing and deleting, and value lists
+and lookup tables the copying; lookup tables live in :mod:`.lookup_helpers`. :data:`ASSET_KINDS` states
 each kind's endpoints and media types once, and the functions below implement
 the life cycle against that table, so the tools need one implementation per
 operation rather than one per kind and operation.
@@ -62,6 +63,7 @@ AssetType = Literal[
     "segmentation_tree",
     "code_file",
     "value_list",
+    "lookup_table",
     "custom_function",
     "function_category",
 ]
@@ -104,6 +106,11 @@ ASSET_KINDS: dict[str, AssetKind] = {
         AssetKind(
             "value_list", "value list", "/referenceData/domains", "referenceValueList", revisions=False, code=False,
             list_fields=("id", "name", "description", "modifiedTimeStamp"), list_filter="eq(type,'valueList')",
+        ),
+        AssetKind(
+            "lookup_table", "lookup table", "/referenceData/domains", "referenceDataDomain", revisions=False,
+            code=False, list_fields=("id", "name", "description", "modifiedTimeStamp"),
+            list_filter="eq(type,'lookup')",
         ),
         AssetKind(
             "custom_function", "custom function", "/businessRules/functions", revisions=False, code=False,
@@ -195,10 +202,17 @@ async def get_asset(
     """The full content of an asset (or one revision), with what it is made of.
 
     A rule set comes with its rules, a code file with its code, a value list
-    with the entries of its newest content version.
+    with the entries of its newest content version, a lookup table with its
+    versions, the entries of its active one and the rule sets that use it.
     """
     kind = kind_for(asset_type)
-    data = (await get_response(client, asset_path(kind, asset_id, revision_id), kind.read_accept)).json()
+    if kind.key == "lookup_table":
+        from . import lookup_helpers  # imports this module, so not at the top
+
+        domain = await lookup_helpers.find_lookup(client, asset_id)
+        # A lookup table has versions, not revisions: revision_id picks one.
+        return await lookup_helpers.describe(client, domain, version=revision_id or "current")
+    data =(await get_response(client, asset_path(kind, asset_id, revision_id), kind.read_accept)).json()
     if kind.key == "code_file" and data.get("fileUri"):
         data["code"] = await read_file_text(client, data["fileUri"])
     elif kind.key == "value_list":
@@ -348,6 +362,21 @@ async def copy_asset(
             client, name=name, data_type=(source.get("properties") or {}).get("dataType", "character"),
             entries=source.get("entries", []), description=source.get("description"), folder_uri=folder["uri"],
         )
+    elif kind.key == "lookup_table":
+        from . import lookup_helpers
+
+        version = source.get("version") or {}
+        entries = await lookup_helpers.all_entries(client, source["id"], version["id"]) if version else []
+        if not entries:
+            raise DecisioningError(f"The lookup table {source.get('name')!r} has no entries to copy.")
+        created = await lookup_helpers.create_lookup(
+            client, name=name, entries=entries, folder_uri=folder["uri"], description=source.get("description"),
+            key_label=version.get("keyLabel"), value_label=version.get("valueLabel"),
+        )
+        created["note"] = (
+            f"Copied the entries of version {version.get('label')}. The copy is not active yet: "
+            "activate_lookup_table publishes it."
+        )
     else:
         body = content_body(source)
         body["name"] = name
@@ -366,10 +395,28 @@ async def copy_asset(
 
 
 async def delete_asset(client: httpx.AsyncClient, asset_type: str, asset_id: str) -> JSONDict:
-    """Delete an asset. A code file the service refuses is retried without its locked revisions."""
+    """Delete an asset. A code file the service refuses is retried without its locked revisions.
+
+    A lookup table that rule sets still use is refused here: Viya would delete
+    it and leave those rule sets unable to generate code.
+    """
     kind = kind_for(asset_type)
     path = asset_path(kind, asset_id)
-    resp = await client.delete(_url(path))
+    params: JSONDict = {}
+    if kind.key == "lookup_table":
+        from . import lookup_helpers
+
+        domain = await lookup_helpers.find_lookup(client, asset_id)
+        asset_id, path = domain["id"], asset_path(kind, domain["id"])
+        users = await lookup_helpers.used_by(client, asset_id)
+        if users:
+            names = ", ".join(f"{u['name']!r} ({u['id']})" for u in users)
+            raise DecisioningError(
+                f"The lookup table {domain['name']!r} is used by the rule set(s) {names}. Deleting it would "
+                "leave their rules in error; change those rules first."
+            )
+        params["deleteProductionContent"] = "true"
+    resp = await client.delete(_url(path), params=params)
     removed_revisions: list[str] = []
     if resp.status_code >= 500 and kind.key == "code_file":
         for revision in (await list_revisions(client, asset_type, asset_id, limit=100))[1:]:

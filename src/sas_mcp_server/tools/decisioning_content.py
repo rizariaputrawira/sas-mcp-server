@@ -5,8 +5,8 @@
 
 Segmentation trees, code files (DS2, Python, SQL), value lists, custom functions
 and DS2 validation, plus one set of life-cycle tools — list, get, code,
-revisions, lock, copy, delete — that work for every kind of decisioning content
-through :mod:`sas_mcp_server.helpers.decisioning_assets`. Registered by
+revisions, lock, copy, delete — that work for every kind of decisioning content,
+lookup tables included, through :mod:`sas_mcp_server.helpers.decisioning_assets`. Registered by
 :func:`sas_mcp_server.tools.decisioning.register` as part of the same tier.
 
 Everything these tools create goes into a SAS Content folder: the ``folder``
@@ -32,7 +32,8 @@ DictListParam = Annotated[list[dict[str, Any]], BeforeValidator(coerce_json_list
 AnyListParam = Annotated[list[Any], BeforeValidator(coerce_json_list)]
 DictParam = Annotated[dict[str, Any], BeforeValidator(coerce_json_dict)]
 AssetTypeParam = Literal[
-    "rule_set", "decision", "segmentation_tree", "code_file", "value_list", "custom_function", "function_category"
+    "rule_set", "decision", "segmentation_tree", "code_file", "value_list", "lookup_table", "custom_function",
+    "function_category",
 ]
 RevisedAssetParam = Literal["rule_set", "decision", "segmentation_tree", "code_file"]
 
@@ -80,7 +81,7 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
 
         Args:
             asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list, custom_function or function_category.
+                value_list, lookup_table, custom_function or function_category.
             limit: Maximum number of results (default 20).
             filter_name: Optional substring of the name.
         """
@@ -98,23 +99,27 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
         """Fetch one piece of decisioning content, or one of its revisions, with the folder it is in.
 
         A rule set comes with its rules, a code file with its code, a value
-        list with the entries of its newest version. Content larger than
+        list with the entries of its newest version, a lookup table with its
+        versions, the entries of its active one (get_lookup_table pages and
+        filters them) and the rule sets that use it. Content larger than
         150,000 characters — a big segmentation tree — is summarised (counts,
         root variable) instead of returned whole; ``summary_only`` asks for the
         summary of anything.
 
         Args:
             asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list, custom_function or function_category.
-            asset_id: The ID (not the name — list_decisioning_assets returns both).
-            revision_id: A revision to read instead of the current state.
+                value_list, lookup_table, custom_function or function_category.
+            asset_id: The ID (not the name — list_decisioning_assets returns
+                both); a lookup table may also be given by its exact name.
+            revision_id: A revision to read instead of the current state (for a
+                lookup table: a version ID or label).
             summary_only: Return the summary rather than the full content.
         """
         kind = assets.kind_for(asset_type)
         async with viya_session("get_decisioning_asset", ctx) as client:
             data = await assets.get_asset(client, asset_type, asset_id, revision_id)
             if kind.key not in ("custom_function", "function_category"):
-                data["folder"] = await current_folder(client, assets.asset_path(kind, asset_id))
+                data["folder"] = await current_folder(client, assets.asset_path(kind, data.get("id") or asset_id))
         if summary_only or len(json.dumps(data, default=str)) > MAX_CONTENT_CHARS:
             summary = _summary(data)
             if not summary_only:
@@ -188,12 +193,15 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
         folder: str | None = None,
         revision_id: str | None = None,
     ) -> dict[str, Any]:
-        """Copy a rule set (with its rules), decision, segmentation tree, code file or value list.
+        """Copy a rule set (with its rules), decision, segmentation tree, code file, value list or lookup table.
 
-        Custom functions and function categories cannot be copied.
+        Custom functions and function categories cannot be copied. A lookup
+        table's copy holds the entries of its active version (or of
+        ``revision_id``, a version ID or label) and is not active itself.
 
         Args:
-            asset_type: rule_set, decision, segmentation_tree, code_file or value_list.
+            asset_type: rule_set, decision, segmentation_tree, code_file,
+                value_list or lookup_table.
             asset_id: The ID of the source.
             name: The name of the copy.
             folder: Where to store the copy: a folder path such as
@@ -217,11 +225,13 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
         """Permanently delete a piece of decisioning content and all its revisions.
 
         Something still in use — a rule set or code file a decision references,
-        a category that still holds functions — is refused by Viya.
+        a category that still holds functions — is refused by Viya. A lookup
+        table that rule sets use is refused here, naming them: Viya would
+        delete it and leave those rules invalid.
 
         Args:
             asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list, custom_function or function_category.
+                value_list, lookup_table, custom_function or function_category.
             asset_id: The ID to delete.
         """
         async with viya_session("delete_decisioning_asset", ctx) as client:

@@ -107,6 +107,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "get_decisioning_asset",
         "get_decisioning_asset_code",
         "list_decisioning_asset_revisions",
+        "get_lookup_table",
         # Tier 9 — Business Glossary
         "list_glossary_term_types",
         "get_glossary_term_type",
@@ -180,6 +181,9 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "update_code_file",
         "create_value_list",
         "update_value_list_entries",
+        "create_lookup_table",
+        "update_lookup_table",
+        "activate_lookup_table",
         "create_custom_function",
         "update_custom_function",
         # Both compile DS2 in a SAS session to answer: no state changes, but
@@ -228,6 +232,9 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         "update_segmentation_tree",  # node / outcomes replace the tree's structure
         "update_code_file",  # new code replaces the working revision's code
         "update_value_list_entries",  # replaces the entries
+        "update_lookup_table",  # remove_keys / replace_entries drop entries
+        # Replaces the entries every published decision using the table reads.
+        "activate_lookup_table",
         "update_custom_function",  # new code changes every rule set that calls it
         "apply_report_operations",  # operations can remove pages/objects
         "create_report",  # on_conflict="replace" can overwrite a report

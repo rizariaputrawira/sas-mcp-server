@@ -10,7 +10,8 @@ the create tools refuse and ask for one. See
 
 The tier's other content — segmentation trees, code files, value lists, custom
 functions, validation, and life-cycle tools for every kind — is registered from
-:mod:`sas_mcp_server.tools.decisioning_content`. Decision flows take every step
+:mod:`sas_mcp_server.tools.decisioning_content`, and lookup tables from
+:mod:`sas_mcp_server.tools.decisioning_lookups`. Decision flows take every step
 kind through :mod:`sas_mcp_server.helpers.decision_flow_helpers`.
 """
 
@@ -24,6 +25,7 @@ from pydantic import BeforeValidator
 
 from ..config import VIYA_ENDPOINT
 from ..helpers import decisioning_assets as assets
+from ..helpers import lookup_helpers as lookups
 from ..helpers.decision_flow_helpers import build_steps
 from ..helpers.folder_helpers import keep_in_folder, resolve_target_folder
 from ..viya_client import (
@@ -38,6 +40,7 @@ from ..viya_client import (
 )
 from ._common import coerce_json_list, make_session_helpers
 from .decisioning_content import register_content_tools
+from .decisioning_lookups import register_lookup_tools
 
 # Tolerant alias for list params some MCP clients deliver as JSON-encoded
 # strings (see _common.coerce_json_list). The published schema is unchanged.
@@ -291,24 +294,38 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             rule_fired_tracking_enabled: Whether to record when this rule fires.
             conditions: List of conditions (multiple conditions AND together),
                 each ``{"type": "complex", "expression", "term": {"name",
-                "dataType", "direction"}}``.
+                "dataType", "direction"}}``, or ``{"type": "lookup", "term":
+                {...}, "lookup": "<lookup table name or ID>"}`` — true when the
+                term's value is a key of the lookup table.
             actions: List of actions, each ``{"type": "assignment"|"return",
-                "term": {"name", "dataType", "direction"}, "expression"}``.
+                "term": {"name", "dataType", "direction"}, "expression"}``, or
+                ``{"type": "lookupValue", "term": {...}, "expression": "<key>",
+                "lookup": "<lookup table name or ID>"}`` — assigns the value the
+                lookup table stores for the key the expression evaluates to.
+
+        A lookup named in a condition or action is resolved to its ID. Rules
+        use the lookup table's active version. The result's ``problems`` lists
+        any condition or action Viya stored as invalid.
         """
-        body = {
-            "name": name,
-            "conditional": conditional,
-            "ruleFiredTrackingEnabled": rule_fired_tracking_enabled,
-            "conditions": conditions,
-            "actions": actions,
-        }
         async with viya_session("create_business_rule", ctx) as client:
-            return await post_json(
+            conditions, actions = await lookups.resolve_rule_lookups(client, conditions, actions)
+            body = {
+                "name": name,
+                "conditional": conditional,
+                "ruleFiredTrackingEnabled": rule_fired_tracking_enabled,
+                "conditions": conditions,
+                "actions": actions,
+            }
+            rule = await post_json(
                 f"/businessRules/ruleSets/{ruleset_id}/rules",
                 client,
                 body=body,
                 params={"createVariables": 1},
             )
+        problems = lookups.rule_problems(rule)
+        if problems:
+            rule["problems"] = problems
+        return rule
 
     @mcp.tool()
     async def update_business_rule(
@@ -330,20 +347,26 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             conditional: "if" starts a new independent rule chain, "elseif"
                 continues the previous rule's chain, "or" ORs into it.
             rule_fired_tracking_enabled: Whether to record when this rule fires.
-            conditions: List of conditions (multiple conditions AND together).
-            actions: List of assignment/return actions to perform when matched.
+            conditions: List of conditions (multiple conditions AND together),
+                including ``lookup`` conditions (see create_business_rule).
+            actions: List of assignment/return/lookupValue actions to perform when matched.
         """
-        body = {
-            "name": name,
-            "conditional": conditional,
-            "ruleFiredTrackingEnabled": rule_fired_tracking_enabled,
-            "conditions": conditions,
-            "actions": actions,
-        }
         async with viya_session("update_business_rule", ctx) as client:
-            return await put_json(
+            conditions, actions = await lookups.resolve_rule_lookups(client, conditions, actions)
+            body = {
+                "name": name,
+                "conditional": conditional,
+                "ruleFiredTrackingEnabled": rule_fired_tracking_enabled,
+                "conditions": conditions,
+                "actions": actions,
+            }
+            rule = await put_json(
                 f"/businessRules/ruleSets/{ruleset_id}/rules/{rule_id}", client, body
             )
+        problems = lookups.rule_problems(rule)
+        if problems:
+            rule["problems"] = problems
+        return rule
 
     @mcp.tool()
     async def get_business_rule(ruleset_id: str, rule_id: str, ctx: Context) -> dict[str, Any]:
@@ -630,6 +653,11 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         ``get_mas_module_step_signature``/``score_data`` without a separate
         lookup via ``list_mas_modules``.
 
+        The code is generated for MAS, as SAS Intelligent Decisioning does when
+        it publishes: lookup tables are read from MAS. The module's inputs are
+        therefore named with a trailing underscore (``credit_score_``);
+        ``score_data`` accepts the plain names too.
+
         Args:
             decision_id: The decision flow UUID (not its name — list_decision_flows returns both).
             revision_id: The locked revision UUID (see
@@ -642,9 +670,12 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 terminal state before giving up (default 60.0).
         """
         async with viya_session("publish_decision_flow", ctx) as client:
+            # Code for the default target (CAS) reads lookup tables as CAS formats,
+            # which MAS refuses ("Unrecognized format").
             code_resp = await client.get(
                 f"{VIYA_ENDPOINT}/decisions/flows/{decision_id}/revisions/{revision_id}/code",
                 headers={"Accept": "text/vnd.sas.source.ds2"},
+                params={"codeTarget": "microAnalyticService"},
             )
             raise_for_viya_status(code_resp)
             body = {
@@ -720,3 +751,4 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             return published
 
     register_content_tools(mcp, viya_session)
+    register_lookup_tools(mcp, viya_session)

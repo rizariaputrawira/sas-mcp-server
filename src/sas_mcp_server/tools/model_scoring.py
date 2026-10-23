@@ -6,10 +6,30 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+import httpx
 from fastmcp import Context, FastMCP
 
 from ..viya_client import contains_filter, get_json, get_paged_items, post_json, return_items
 from ._common import make_session_helpers
+
+
+def match_input_names(input_data: dict[str, Any], step_inputs: list[str]) -> dict[str, str]:
+    """The names in *input_data* the step does not know but knows with a trailing underscore.
+
+    Modules published from SAS Intelligent Decisioning name their inputs
+    ``credit_score_``; MAS compares names without case. Returns
+    ``{given name: step input name}``.
+    """
+    known = {name.lower(): name for name in step_inputs}
+    return {
+        name: known[f"{name}_".lower()]
+        for name in input_data
+        if name.lower() not in known and f"{name}_".lower() in known and f"{name}_" not in input_data
+    }
+
+
+def _inputs(input_data: dict[str, Any]) -> dict[str, Any]:
+    return {"inputs": [{"name": k, "value": v} for k, v in input_data.items()]}
 
 
 def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
@@ -79,15 +99,28 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     async def score_data(module_id: str, step_id: str, input_data: dict, ctx: Context) -> dict[str, Any]:
         """Score data against a published model or decision (MAS module).
 
+        A decision published from SAS Intelligent Decisioning (or with
+        ``publish_decision_flow``) names its inputs with a trailing underscore
+        (``credit_score_``); the plain names are accepted and mapped, and the
+        result's ``inputs_renamed`` says so.
+
         Args:
             module_id: MAS module ID.
             step_id: Step ID within the module (usually 'score' or 'execute').
             input_data: Dictionary of input variable name-value pairs.
         """
-        body = {"inputs": [{"name": k, "value": v} for k, v in input_data.items()]}
+        path = f"/microanalyticScore/modules/{module_id}/steps/{step_id}"
         async with viya_session("score_data", ctx) as client:
-            return await post_json(
-                f"/microanalyticScore/modules/{module_id}/steps/{step_id}",
-                client,
-                body=body,
-            )
+            try:
+                return await post_json(path, client, body=_inputs(input_data))
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 400:
+                    raise
+                step = await get_json(path, client)
+                renames = match_input_names(input_data, [i.get("name", "") for i in step.get("inputs") or []])
+                if not renames:
+                    raise
+            renamed = {renames.get(name, name): value for name, value in input_data.items()}
+            result = await post_json(path, client, body=_inputs(renamed))
+            result["inputs_renamed"] = renames
+            return result
