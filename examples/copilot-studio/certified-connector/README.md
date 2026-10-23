@@ -10,7 +10,7 @@ The server is deployed by each customer next to their own SAS Viya environment. 
 
 ## Prerequisites
 
-- A SAS Viya MCP Server with `MCP_TOOL_RENAME` support (releases after 1.18.0) reachable from the internet over HTTPS, with:
+- A SAS Viya MCP Server with `MCP_TOOL_RENAME` support (1.19.0 or later) reachable from the internet over HTTPS, with:
   - `ALLOW_RAW_BEARER=true`, so the server accepts the SAS Viya access token the connector sends;
   - `MCP_TOOL_RENAME=catalog_=infocat_`, because Copilot Studio fails on tool names that start with `catalog_`.
 - An OAuth client in SAS Logon for this connector, registered by a SAS Viya administrator:
