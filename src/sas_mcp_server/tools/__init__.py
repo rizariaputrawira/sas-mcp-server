@@ -77,7 +77,7 @@ TIER_TITLES: dict[int, str] = {
     4: "Batch Jobs & Async Execution",
     5: "Automated Machine Learning",
     6: "Model Management & Scoring",
-    7: "Decisioning Starter (SAS Intelligent Decisioning)",
+    7: "Decisioning Foundation (SAS Intelligent Decisioning)",
     8: "Workbench (Execute Code Only)",
     9: "Business Glossary (SAS Data Governance)",
     10: "Decisioning Advanced (SAS Intelligent Decisioning)",
@@ -87,7 +87,7 @@ ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
 
 # Tier 10 creates content that only Tier 7's tools can put into a decision or
 # read, lock, copy and delete, so enabling it alone draws a warning.
-DECISIONING_STARTER = 7
+DECISIONING_FOUNDATION = 7
 DECISIONING_ADVANCED = 10
 
 # tool name -> tier, filled in as the tiers register. Telemetry stamps it on
@@ -234,12 +234,12 @@ def register_tools(
     logger.info(
         "Registering tool tiers: %s (read_only=%s, apps=%s)", sorted(enabled), ro, with_apps
     )
-    if DECISIONING_ADVANCED in enabled and DECISIONING_STARTER not in enabled:
+    if DECISIONING_ADVANCED in enabled and DECISIONING_FOUNDATION not in enabled:
         logger.warning(
-            "Tier %d (Decisioning Advanced) is enabled without Tier %d (Decisioning Starter). It can create "
+            "Tier %d (Decisioning Advanced) is enabled without Tier %d (Decisioning Foundation). It can create "
             "segmentation trees, code files, value lists and custom functions, but using them in a decision "
             "flow, and listing, reading, locking, copying or deleting them, needs Tier %d: add %d to MCP_TIERS.",
-            DECISIONING_ADVANCED, DECISIONING_STARTER, DECISIONING_STARTER, DECISIONING_STARTER,
+            DECISIONING_ADVANCED, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION,
         )
     seen: list[str] = []
     version = server_version() or ""

@@ -159,7 +159,7 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 4 | Batch Jobs & Async Execution |
 | 5 | Automated Machine Learning |
 | 6 | Model Management & Scoring |
-| 7 | Decisioning Starter (SAS Intelligent Decisioning) |
+| 7 | Decisioning Foundation (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
 | 9 | Business Glossary (SAS Data Governance) |
 | 10 | Decisioning Advanced (SAS Intelligent Decisioning) — needs Tier 7 |
@@ -322,7 +322,7 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
 - **score_data**: Score data against a published model or decision; for a decision published from the Intelligent Decisioning UI, whose inputs carry a trailing underscore, the plain names are accepted and mapped (`inputs_renamed`)
 
-#### Tier 7 — Decisioning Starter (SAS Intelligent Decisioning)
+#### Tier 7 — Decisioning Foundation (SAS Intelligent Decisioning)
 Build and run SAS Intelligent Decisioning decisions — rule sets that consult lookup tables, and decision flows that combine them with models, branches, conditions, assignments and sub-decisions — then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it. The life-cycle tools read, lock, copy and delete every kind of decisioning content. Segmentation trees, code files, value lists and custom functions are written with [Tier 10](#tier-10--decisioning-advanced-sas-intelligent-decisioning); enable both (`MCP_TIERS=...,7,10`) for everything — the server logs a warning when Tier 10 is on without Tier 7.
 
 Rule sets and decision flows are always stored in a SAS Content folder. The create tools take a `folder` — a path such as `/Public/Content/Decisions`, `My Folder` or `My Folder/Risk`, a folder ID, or a folder URI — and fall back to the deployment's `MCP_DEFAULT_FOLDER`. With neither, they refuse and the model asks the user where to store the asset. An update leaves an asset in its folder; one created before folders were required is filed by its next update, into the folder given or the default. Every create and update result carries `folder`, with the path the asset is in.

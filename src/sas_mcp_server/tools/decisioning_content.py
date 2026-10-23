@@ -4,7 +4,7 @@
 """Tier 10 — Decisioning Advanced: SAS Intelligent Decisioning content beyond rule sets.
 
 Segmentation trees (written, or built from a strategy table), code files (DS2,
-Python, SQL), value lists and DS2 custom functions. Tier 7 (Decisioning Starter)
+Python, SQL), value lists and DS2 custom functions. Tier 7 (Decisioning Foundation)
 holds what uses them — decision flows, which take them as steps — and the
 life-cycle tools that read, lock, copy and delete them, so this tier is meant to
 be enabled together with Tier 7; :func:`sas_mcp_server.tools.register_tools`

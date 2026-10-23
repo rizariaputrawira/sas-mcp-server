@@ -72,13 +72,13 @@ async def test_register_single_tier():
     assert len(names) == 34
     assert "create_business_ruleset" in names
     assert "get_mas_module_step_signature" not in names  # tier 6, not 7
-    # The starter tier reads, locks and deletes every kind of content and checks expressions...
+    # The foundation tier reads, locks and deletes every kind of content and checks expressions...
     assert {"get_decisioning_asset", "create_lookup_table", "validate_decision_expression"} <= names
     # ...the advanced tier creates the content beyond rule sets.
     assert "create_segmentation_tree" not in names and "create_code_file" not in names
 
 
-async def test_decisioning_advanced_alone_warns_that_it_needs_the_starter_tier(monkeypatch):
+async def test_decisioning_advanced_alone_warns_that_it_needs_the_foundation_tier(monkeypatch):
     warning = MagicMock()
     monkeypatch.setattr(tools.logger, "warning", warning)
     names = await _register("10")

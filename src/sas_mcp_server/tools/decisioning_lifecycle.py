@@ -6,7 +6,7 @@
 List, get, code, revisions, lock, copy and delete take an ``asset_type`` and
 work the same way for rule sets, decisions, segmentation trees, code files,
 value lists, lookup tables, custom functions and function categories, through
-:mod:`sas_mcp_server.helpers.decisioning_assets`. They are in the starter tier,
+:mod:`sas_mcp_server.helpers.decisioning_assets`. They are in the foundation tier,
 so content the advanced tier (Tier 10) creates is read, locked, copied and
 deleted with them. Registered by :func:`sas_mcp_server.tools.decisioning.register`.
 """
