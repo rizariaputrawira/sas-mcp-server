@@ -245,7 +245,7 @@ def register_lookup_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> Non
                 version = result["activation"]["version"]
             elif edits_entries:
                 result["note"] = (
-                    f"The changes are in version {version.get('label')}, which rules do not use until it is "
+                    f"The changes are in version {(version or {}).get('label')}, which rules do not use until it is "
                     "activated (activate_lookup_table)."
                 )
             if version is not None:

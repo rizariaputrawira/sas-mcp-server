@@ -120,7 +120,8 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 renames = match_input_names(input_data, [i.get("name", "") for i in step.get("inputs") or []])
                 if not renames:
                     raise
-            renamed = {renames.get(name, name): value for name, value in input_data.items()}
+            given: dict[str, Any] = input_data
+            renamed = {renames.get(name, name): value for name, value in given.items()}
             result = await post_json(path, client, body=_inputs(renamed))
             result["inputs_renamed"] = renames
             return result

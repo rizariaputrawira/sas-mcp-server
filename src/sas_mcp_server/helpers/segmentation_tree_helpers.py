@@ -242,8 +242,8 @@ def _fmt(number: float) -> str:
 
 def _column_type(values: list[Any]) -> str:
     present = [v for v in values if not _is_missing(v)]
-    numbers = [to_number(v) for v in present]
-    if present and all(n is not None for n in numbers):
+    numbers = [n for n in (to_number(v) for v in present) if n is not None]
+    if present and len(numbers) == len(present):
         return "integer" if all(float(n).is_integer() for n in numbers) else "decimal"
     return "string"
 
@@ -254,7 +254,8 @@ def _typed(value: Any, data_type: str) -> Any:
     if _is_missing(value):
         return None
     if data_type == "integer":
-        return int(to_number(value))
+        number = to_number(value)
+        return int(number) if number is not None else value
     if data_type == "decimal":
         return to_number(value)
     number = to_number(value)

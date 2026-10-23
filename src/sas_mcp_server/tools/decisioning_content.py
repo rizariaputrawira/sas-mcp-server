@@ -242,6 +242,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             elif file_path:
                 table = trees.rows_from_csv_file(file_path)
             else:
+                assert caslib_name is not None and table_name is not None  # checked above
                 table = await trees.rows_from_cas_table(client, server_id, caslib_name, table_name)
             root, outcomes, signature, report = trees.build_tree_from_rows(
                 table, key_columns=key_columns, outcome_columns=[str(c) for c in outcome_columns], split=split,

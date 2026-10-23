@@ -133,6 +133,7 @@ async def _flow_body(
         )
     if rule_set_steps is not None:
         return _build_decision_flow_body(name, signature, rule_set_steps, description), None
+    assert steps is not None  # exactly one of the two was given
     built, report = await build_steps(client, steps, signature, add_missing_variables=add_missing_variables)
     body = {"name": name, "description": description or "", "signature": signature, "flow": {"steps": built}}
     return body, report
