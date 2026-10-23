@@ -3,6 +3,8 @@
 
 """Tests for tool-tier selection and registration (MCP_TIERS / register_tools tiers=)."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from fastmcp import Client, FastMCP
 
@@ -33,7 +35,7 @@ def test_resolve_range_list_and_csv():
     assert tools.resolve_enabled_tiers([2, 3]) == {2, 3}
 
 
-@pytest.mark.parametrize("bad", ["0-99", "10", "abc", [42]])
+@pytest.mark.parametrize("bad", ["0-99", "11", "abc", [42]])
 def test_resolve_rejects_unknown_tiers(bad):
     with pytest.raises(ConfigError):
         tools.resolve_enabled_tiers(bad)
@@ -48,7 +50,7 @@ def test_env_var_drives_default(monkeypatch):
 
 async def test_register_all_tiers_registers_everything():
     names = await _register(None)
-    assert len(names) == 92
+    assert len(names) == 115
     assert "execute_sas_code" in names
     assert "publish_decision_flow" in names
     assert "apply_report_operations" in names
@@ -57,7 +59,7 @@ async def test_register_all_tiers_registers_everything():
 
 async def test_register_subset_excludes_other_tiers():
     names = await _register("0-4")
-    assert len(names) == 44
+    assert len(names) == 45
     assert "execute_sas_code" in names  # tier 0
     assert "list_jobs" in names  # tier 4
     assert "list_mas_modules" not in names  # tier 6
@@ -67,9 +69,34 @@ async def test_register_subset_excludes_other_tiers():
 
 async def test_register_single_tier():
     names = await _register("7")
-    assert len(names) == 22
+    assert len(names) == 34
     assert "create_business_ruleset" in names
     assert "get_mas_module_step_signature" not in names  # tier 6, not 7
+    # The foundation tier reads, locks and deletes every kind of content and checks expressions...
+    assert {"get_decisioning_asset", "create_lookup_table", "validate_decision_expression"} <= names
+    # ...the advanced tier creates the content beyond rule sets.
+    assert "create_segmentation_tree" not in names and "create_code_file" not in names
+
+
+async def test_decisioning_advanced_alone_warns_that_it_needs_the_foundation_tier(monkeypatch):
+    warning = MagicMock()
+    monkeypatch.setattr(tools.logger, "warning", warning)
+    names = await _register("10")
+    assert names == {
+        "create_segmentation_tree", "update_segmentation_tree", "create_segmentation_tree_from_table",
+        "create_code_file", "update_code_file", "create_value_list", "update_value_list_entries",
+        "create_custom_function", "update_custom_function", "validate_custom_function",
+    }
+    warning.assert_called_once()
+    message = warning.call_args.args[0] % warning.call_args.args[1:]
+    assert "Tier 10 (Decisioning Advanced) is enabled without Tier 7" in message and "add 7 to MCP_TIERS" in message
+
+
+async def test_decisioning_tiers_together_do_not_warn(monkeypatch):
+    warning = MagicMock()
+    monkeypatch.setattr(tools.logger, "warning", warning)
+    assert len(await _register("7,10")) == 44
+    warning.assert_not_called()
 
 
 async def test_register_glossary_tier_alone():

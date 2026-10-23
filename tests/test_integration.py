@@ -54,6 +54,39 @@ async def _viya_get(token: str, path: str, params: dict | None = None) -> dict:
         return resp.json()
 
 
+async def _viya_post(token: str, path: str, body: dict, params: dict | None = None) -> dict:
+    """Authenticated POST against the live Viya, used to set up test fixtures."""
+    from sas_mcp_server.config import VIYA_ENDPOINT
+    from sas_mcp_server.viya_client import make_client
+
+    async with make_client(token) as client:
+        resp = await client.post(
+            f"{VIYA_ENDPOINT}{path}",
+            json=body,
+            params=params or {},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _parent_folder_id(token: str, asset_uri: str) -> str | None:
+    """The id of the folder *asset_uri* sits in, or None when it is in none."""
+    from sas_mcp_server.config import VIYA_ENDPOINT
+    from sas_mcp_server.viya_client import make_client
+
+    async with make_client(token) as client:
+        resp = await client.get(
+            f"{VIYA_ENDPOINT}/folders/ancestors",
+            params={"childUri": asset_uri},
+            headers={"Accept": "application/json"},
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()[0]["id"]
+
+
 async def _viya_delete(token: str, path: str) -> None:
     """Authenticated DELETE against the live Viya, used for best-effort cleanup."""
     from sas_mcp_server.config import VIYA_ENDPOINT
@@ -1010,8 +1043,10 @@ async def test_business_rules_and_decisions_workflow(integration_mcp_server, viy
                     {"name": "risk_category", "dataType": "string", "direction": "output"},
                 ],
                 "description": "Integration test ruleset",
+                "folder": "My Folder",
             })).data
             ruleset_id = ruleset["id"]
+            assert ruleset["folder"]["path"].endswith("/My Folder")
 
             rule = (await client.call_tool("create_business_rule", {
                 "ruleset_id": ruleset_id,
@@ -1105,8 +1140,10 @@ async def test_business_rules_and_decisions_workflow(integration_mcp_server, viy
                          "targetDecisionTermName": "risk_category"},
                     ],
                 }],
+                "folder": "My Folder",
             })).data
             decision_id = decision["id"]
+            assert decision["folder"]["path"].endswith("/My Folder")
 
             fetched_decision = (await client.call_tool("get_decision_flow", {
                 "decision_id": decision_id,
@@ -1198,6 +1235,410 @@ async def test_business_rules_and_decisions_workflow(integration_mcp_server, viy
                 if ruleset_id:
                     with contextlib.suppress(Exception):
                         await cleanup_client.call_tool("delete_business_ruleset", {"ruleset_id": ruleset_id})
+
+
+# -----------------------------------------------------------------------
+# Folder placement (find_folder; decisioning assets always in a folder)
+# -----------------------------------------------------------------------
+
+
+async def test_decisioning_folder_placement(integration_mcp_server, viya_token, monkeypatch):
+    """find_folder in every reference form; creates refuse without a folder,
+    honour a path below My Folder and MCP_DEFAULT_FOLDER; an update files a
+    folderless rule set and leaves one in a folder where it is."""
+    try:
+        await _viya_get(viya_token, "/businessRules/ruleSets", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
+    folder_name = f"mcp_test_folder_{_SUFFIX}"
+    folder = await _viya_post(
+        viya_token, "/folders/folders", {"name": folder_name, "type": "folder"},
+        params={"parentFolderUri": "/folders/folders/@myFolder"},
+    )
+    folder_id = folder["id"]
+    folder_uri = f"/folders/folders/{folder_id}"
+    created_rulesets: list[str] = []
+    decision_id = None
+    signature = [
+        {"name": "credit_score", "dataType": "integer", "direction": "input"},
+        {"name": "risk_category", "dataType": "string", "direction": "output"},
+    ]
+
+    async with Client(integration_mcp_server) as client:
+        try:
+            # find_folder: a path below My Folder, the id, the URI and the full path agree
+            by_my_path = (await client.call_tool("find_folder", {"folder": f"My Folder/{folder_name}"})).data
+            assert by_my_path["id"] == folder_id
+            assert by_my_path["path"].endswith(f"/My Folder/{folder_name}")
+            for reference in (folder_id, folder_uri, by_my_path["path"]):
+                found = (await client.call_tool("find_folder", {"folder": reference})).data
+                assert found == by_my_path, reference
+            missing = await client.call_tool(
+                "find_folder", {"folder": f"/Public/no_such_folder_{_SUFFIX}"}, raise_on_error=False
+            )
+            assert missing.is_error
+
+            # no folder and no default: refused, nothing created
+            monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", "")
+            refused = await client.call_tool("create_business_ruleset", {
+                "name": f"mcp_nofolder_{_SUFFIX}", "signature": signature,
+            }, raise_on_error=False)
+            assert refused.is_error
+            assert "Ask the user where to store it" in refused.content[0].text
+            leftovers = await _viya_get(
+                viya_token, "/businessRules/ruleSets", {"filter": f"eq(name,'mcp_nofolder_{_SUFFIX}')"}
+            )
+            assert leftovers.get("count", 0) == 0
+
+            # a path below My Folder
+            ruleset = (await client.call_tool("create_business_ruleset", {
+                "name": f"mcp_fold_rs_{_SUFFIX}", "signature": signature,
+                "folder": f"My Folder/{folder_name}",
+            })).data
+            created_rulesets.append(ruleset["id"])
+            assert ruleset["folder"]["id"] == folder_id
+            assert await _parent_folder_id(viya_token, f"/businessRules/ruleSets/{ruleset['id']}") == folder_id
+
+            # the default folder, for a decision created without a folder
+            rule = (await client.call_tool("create_business_rule", {
+                "ruleset_id": ruleset["id"], "name": "High", "conditional": "if",
+                "rule_fired_tracking_enabled": False,
+                "conditions": [{"type": "complex", "expression": "credit_score < 600",
+                                "term": {"name": "credit_score", "dataType": "integer", "direction": "input"}}],
+                "actions": [{"type": "assignment", "expression": "'HIGH'",
+                             "term": {"name": "risk_category", "dataType": "string", "direction": "output"}}],
+            })).data
+            assert rule["id"]
+            version = (await client.call_tool("lock_business_ruleset_revision", {
+                "ruleset_id": ruleset["id"],
+            })).data
+            monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", folder_uri)
+            decision = (await client.call_tool("create_decision_flow", {
+                "name": f"mcp_fold_dec_{_SUFFIX}",
+                "signature": [
+                    {"name": "credit_score", "direction": "input", "dataType": "integer"},
+                    {"name": "risk_category", "direction": "output", "dataType": "string"},
+                ],
+                "rule_set_steps": [{
+                    "ruleSetId": ruleset["id"], "versionId": version["id"],
+                    "mappings": [
+                        {"stepTermName": "credit_score", "direction": "input",
+                         "targetDecisionTermName": "credit_score"},
+                        {"stepTermName": "risk_category", "direction": "output",
+                         "targetDecisionTermName": "risk_category"},
+                    ],
+                }],
+            })).data
+            decision_id = decision["id"]
+            assert decision["folder"]["id"] == folder_id
+            assert await _parent_folder_id(viya_token, f"/decisions/flows/{decision_id}") == folder_id
+
+            # an update leaves a rule set in its folder, whatever folder is named
+            kept = (await client.call_tool("update_business_ruleset", {
+                "ruleset_id": ruleset["id"], "name": f"mcp_fold_rs_{_SUFFIX}",
+                "signature": signature, "folder": "My Folder",
+            })).data
+            assert kept["folder"]["status"] == "unchanged"
+            assert kept["folder"]["id"] == folder_id
+
+            # a rule set made in no folder (as before) is filed by its next update
+            orphan = await _viya_post(viya_token, "/businessRules/ruleSets", {
+                "name": f"mcp_orphan_rs_{_SUFFIX}", "signature": signature,
+            })
+            created_rulesets.append(orphan["id"])
+            assert await _parent_folder_id(viya_token, f"/businessRules/ruleSets/{orphan['id']}") is None
+            filed = (await client.call_tool("update_business_ruleset", {
+                "ruleset_id": orphan["id"], "name": f"mcp_orphan_rs_{_SUFFIX}",
+                "signature": signature, "folder": folder_uri,
+            })).data
+            assert filed["folder"]["status"] == "filed"
+            assert await _parent_folder_id(viya_token, f"/businessRules/ruleSets/{orphan['id']}") == folder_id
+        finally:
+            async with Client(integration_mcp_server) as cleanup_client:
+                if decision_id:
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool("delete_decision_flow", {"decision_id": decision_id})
+                for ruleset_id in created_rulesets:
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool("delete_business_ruleset", {"ruleset_id": ruleset_id})
+            with contextlib.suppress(Exception):
+                await _viya_delete(viya_token, f"{folder_uri}?recursive=true")
+
+
+# -----------------------------------------------------------------------
+# Decisioning content (trees, code files, value lists, functions, flows)
+# -----------------------------------------------------------------------
+
+
+async def test_decisioning_content_workflow(integration_mcp_server, viya_token):
+    """Every decisioning content tool once, in a scratch folder below My Folder:
+    custom function -> value list -> segmentation trees (written and from a table)
+    -> code files (DS2, Python, SQL) -> revisions, copy, code -> a decision built from
+    shorthand steps -> everything deleted again."""
+    try:
+        # Collections answer application/json for flows and rule sets (the tree listing does not).
+        await _viya_get(viya_token, "/businessRules/ruleSets", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
+    folder_name = f"mcp_test_content_{_SUFFIX}"
+    folder = await _viya_post(
+        viya_token, "/folders/folders", {"name": folder_name, "type": "folder"},
+        params={"parentFolderUri": "/folders/folders/@myFolder"},
+    )
+    target = f"/folders/folders/{folder['id']}"
+    created: list[tuple[str, str]] = []  # (asset_type, id), deleted in reverse
+    signature = [
+        {"name": "score", "dataType": "decimal", "direction": "input"},
+        {"name": "band", "dataType": "string", "direction": "output"},
+    ]
+    function_code = (
+        "method mcp_test_band_" + _SUFFIX + "(double score) returns varchar(10);\n"
+        "   if score >= 630 then return 'LOW'; return 'HIGH';\nend;"
+    )
+
+    async def tool(name, args):
+        result = await client.call_tool(name, args)
+        return result.data if result.data is not None else result.content[0].text
+
+    async with Client(integration_mcp_server) as client:
+        try:
+            # custom function, validation
+            broken = function_code.replace("return 'HIGH';", "return 'HIGH'")
+            check = await tool("validate_custom_function", {"code": broken})
+            assert check["valid"] is False and check["errors"]
+            function = await tool("create_custom_function", {
+                "code": function_code, "category": f"mcp_test_cat_{_SUFFIX}", "description": "integration test"})
+            created += [("function_category", function["category"]["id"]), ("custom_function", function["id"])]
+            updated_fn = await tool("update_custom_function", {"function_id": function["id"], "description": "changed"})
+            assert updated_fn["description"] == "changed"
+            expression = await tool("validate_decision_expression", {
+                "expression": "score * 2 >= 1260", "signature": signature[:1]})
+            assert expression["valid"] is True
+            bad = await tool("validate_decision_expression", {"expression": "score * ", "signature": signature[:1]})
+            assert bad["valid"] is False and bad["errors"]
+
+            # value list
+            value_list = await tool("create_value_list", {
+                "name": f"mcp_test_bands_{_SUFFIX}", "data_type": "numeric", "folder": target,
+                "entries": [{"key": "v>=630", "label": "630 and above"}]})
+            created.append(("value_list", value_list["id"]))
+            entries = await tool("update_value_list_entries", {
+                "value_list_id": value_list["id"], "entries": ["v>=630", "600<=v<630", "v<600"]})
+            assert [e["key"] for e in entries["entries"]] == ["v>=630", "600<=v<630", "v<600"]
+
+            # a written tree, then an update
+            tree = await tool("create_segmentation_tree", {
+                "name": f"mcp_test_tree_{_SUFFIX}", "folder": target, "signature": signature,
+                "node": {"variable": "score", "valueNodes": [{"value": ">=630", "outcome": "low"},
+                                                             {"value": "Other", "outcome": "high"}]},
+                "outcomes": [{"name": "low", "assign": {"band": "LOW"}}, {"name": "high", "assign": {"band": "HIGH"}}]})
+            created.append(("segmentation_tree", tree["id"]))
+            assert tree["folder"]["id"] == folder["id"]
+            changed = await tool("update_segmentation_tree", {"tree_id": tree["id"], "description": "changed"})
+            assert changed["description"] == "changed" and changed["folder"]["status"] == "unchanged"
+
+            # a tree from a strategy table, with value lists
+            from_table = await tool("create_segmentation_tree_from_table", {
+                "name": f"mcp_test_strategy_{_SUFFIX}", "folder": target, "key_columns": ["Score"],
+                "outcome_columns": ["Band"], "create_value_lists": True,
+                "rows": [{"Score": 0, "Band": "HIGH"}, {"Score": 600, "Band": "MID"}, {"Score": 630, "Band": "LOW"}]})
+            created.append(("segmentation_tree", from_table["id"]))
+            created += [("value_list", v["id"]) for v in from_table["value_lists"]]
+            assert from_table["report"]["leaves"] == 3
+
+            # code files of every type
+            ds2 = await tool("create_code_file", {
+                "name": f"mcp test ds2 {_SUFFIX}", "code_type": "ds2", "folder": target,
+                "description": "integration test",
+                "code": 'package "${PACKAGE_NAME}" /inline;\n method execute(double score, in_out varchar band);\n'
+                        "   if score >= 630 then band = 'LOW'; else band = 'HIGH';\n end;\nendpackage;\n"})
+            created.append(("code_file", ds2["id"]))
+            assert ds2["name"] == f"mcp test ds2 {_SUFFIX}" and ds2["description"] == "integration test"
+            python = await tool("create_code_file", {
+                "name": f"mcp test py {_SUFFIX}", "code_type": "python", "folder": target,
+                "code": "def execute(score):\n   'Output: band'\n"
+                        "   return 'LOW' if score and score >= 630 else 'HIGH'\n",
+                "signature": signature})
+            created.append(("code_file", python["id"]))
+            assert {t["name"]: t["dataType"] for t in python["signature"]} == {"score": "decimal", "band": "string"}
+            sql = await tool("create_code_file", {
+                "name": f"mcp test sql {_SUFFIX}", "code_type": "sql", "folder": target,
+                "code": "select count(*) as {:n:integer} from \"T\" where x = {?:score:decimal}"})
+            created.append(("code_file", sql["id"]))
+            renamed = await tool("update_code_file", {"code_file_id": sql["id"], "description": "changed"})
+            assert renamed["description"] == "changed"
+
+            # revisions, code, listing, copy
+            tree_ref = {"asset_type": "segmentation_tree", "asset_id": tree["id"]}
+            locked = await tool("lock_decisioning_asset_revision", tree_ref)
+            assert locked["locked_revision"]["locked"] is True
+            revisions = await tool("list_decisioning_asset_revisions", tree_ref)
+            assert any(r["id"] == locked["locked_revision"]["id"] for r in revisions)
+            code = await tool("get_decisioning_asset_code", {"asset_type": "segmentation_tree", "asset_id": tree["id"]})
+            assert "_double_value" in code
+            read = await tool("get_decisioning_asset", {"asset_type": "code_file", "asset_id": ds2["id"]})
+            assert "method execute" in read["code"] and read["folder"]["id"] == folder["id"]
+            listed = await tool("list_decisioning_assets", {"asset_type": "segmentation_tree", "filter_name": _SUFFIX})
+            assert {tree["id"], from_table["id"]} <= {t["id"] for t in listed}
+            copy = await tool("copy_decisioning_asset", {
+                "asset_type": "segmentation_tree", "asset_id": tree["id"], "name": f"mcp_test_tree_copy_{_SUFFIX}",
+                "folder": target})
+            created.append(("segmentation_tree", copy["id"]))
+
+            # a decision from shorthand steps
+            decision = await tool("create_decision_flow", {
+                "name": f"mcp_test_steps_{_SUFFIX}", "folder": target,
+                "signature": signature + [{"name": "path", "dataType": "string", "direction": "output"}],
+                "steps": [
+                    {"type": "assignment", "assignments": {"path": "START"}},
+                    {"type": "segmentation_tree", "id": tree["id"]},
+                    {"type": "code_file", "id": ds2["id"]},
+                    {"type": "branch", "variable": "score", "cases": [
+                        {"label": "high", "min": 630,
+                         "steps": [{"type": "assignment", "assignments": {"path": "HIGH"}}]}]},
+                    {"type": "condition", "expression": "band = 'LOW'",
+                     "on_true": [{"type": "assignment", "assignments": {"path": "LOW"}}], "on_false": []},
+                ]})
+            created.append(("decision", decision["id"]))
+            report = decision["steps_report"]
+            assert report["unmapped_inputs"] == [] and report["warnings"] == []
+            assert any(s["asset_type"] == "code_file" for s in report["locked_for_this_flow"])
+        finally:
+            async with Client(integration_mcp_server) as cleanup_client:
+                for asset_type, asset_id in reversed(created):
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool(
+                            "delete_decisioning_asset", {"asset_type": asset_type, "asset_id": asset_id}
+                        )
+            with contextlib.suppress(Exception):
+                await _viya_delete(viya_token, f"{target}?recursive=true")
+
+
+async def test_lookup_table_workflow(integration_mcp_server, viya_token):
+    """A lookup table end to end, in a scratch folder below My Folder: create and
+    activate -> a rule set that tests and reads it (named, resolved to its ID) -> a
+    decision published to MAS and scored -> new entries activated, which the published
+    decision uses without being published again -> rollback, republish, copy -> the
+    delete refused while a rule set uses the table -> everything deleted again."""
+    try:
+        await _viya_get(viya_token, "/referenceData/domains", {"limit": 1})
+        await _viya_get(viya_token, "/decisions/flows", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Intelligent Decisioning not available on this instance: {e}")
+
+    folder = await _viya_post(
+        viya_token, "/folders/folders", {"name": f"mcp_test_lookup_{_SUFFIX}", "type": "folder"},
+        params={"parentFolderUri": "/folders/folders/@myFolder"},
+    )
+    target = f"/folders/folders/{folder['id']}"
+    name = f"mcp_test_countries_{_SUFFIX}"
+    created: list[tuple[str, str]] = []  # (asset_type, id), deleted in reverse
+    published: dict = {}
+    signature = [
+        {"name": "country", "dataType": "string", "direction": "input"},
+        {"name": "risk", "dataType": "string", "direction": "output"},
+        {"name": "listed", "dataType": "string", "direction": "output"},
+    ]
+
+    async def tool(tool_name, args):
+        result = await client.call_tool(tool_name, args)
+        return result.data if result.data is not None else result.content[0].text
+
+    async def score(module_id, country):
+        result = await tool("score_data", {"module_id": module_id, "step_id": "execute",
+                                           "input_data": {"country": country}})
+        assert "inputs_renamed" not in result  # the module takes the decision's own names
+        return {o["name"]: o.get("value") for o in result["outputs"]}
+
+    async with Client(integration_mcp_server) as client:
+        try:
+            lookup = await tool("create_lookup_table", {
+                "name": name, "folder": target, "entries": {"Iran": "High", "Cuba": "High"},
+                "key_label": "Country", "value_label": "Risk", "activate": True})
+            created.append(("lookup_table", lookup["id"]))
+            assert lookup["activation"]["outcome"] == "active" and lookup["folder"]["id"] == folder["id"]
+            read = await tool("get_lookup_table", {"lookup_table": name})
+            assert read["active_version"] == "1.0" and read["entry_count"] == 2 and read["used_by"] == []
+
+            ruleset = await tool("create_business_ruleset", {
+                "name": f"mcp_test_lookup_rs_{_SUFFIX}"[:30], "signature": signature, "folder": target})
+            created.append(("rule_set", ruleset["id"]))
+            rule = await tool("create_business_rule", {
+                "ruleset_id": ruleset["id"], "name": "listed_country", "conditional": "if",
+                "rule_fired_tracking_enabled": True,
+                "conditions": [{"type": "lookup", "term": signature[0], "lookup": name}],
+                "actions": [
+                    {"type": "assignment", "term": signature[2], "expression": "'Y'"},
+                    {"type": "lookupValue", "term": signature[1], "expression": "country", "lookup": name},
+                ]})
+            assert "problems" not in rule
+            assert rule["conditions"][0]["lookup"]["id"] == lookup["id"]
+            for _ in range(10):  # the relationships service records the use a few seconds later
+                used = await tool("get_lookup_table", {"lookup_table": lookup["id"], "limit": 1})
+                if used["used_by"]:
+                    break
+                await asyncio.sleep(3)
+            assert [u["id"] for u in used["used_by"]] == [ruleset["id"]] and used["next_start"] == 1
+            refused = await client.call_tool(
+                "delete_decisioning_asset", {"asset_type": "lookup_table", "asset_id": lookup["id"]},
+                raise_on_error=False)
+            assert refused.is_error and ruleset["id"] in refused.content[0].text
+
+            decision = await tool("create_decision_flow", {
+                "name": f"mcp_test_lookup_decision_{_SUFFIX}", "folder": target, "signature": signature,
+                "steps": [{"type": "rule_set", "id": ruleset["id"]}]})
+            created.append(("decision", decision["id"]))
+            locked = await tool("lock_decision_flow_revision", {"decision_id": decision["id"]})
+            published = await tool("publish_decision_flow", {
+                "decision_id": decision["id"], "revision_id": locked["locked_revision"]["id"],
+                "publish_name": f"mcp_test_lookup_{_SUFFIX}", "poll_timeout": 120})
+            assert published["moduleState"] == "completed", published.get("moduleErrors")
+            module = published["moduleId"]
+            step = await tool("get_mas_module_step_signature", {"module_id": module})
+            assert [i["name"] for i in step["inputs"]] == ["country"]
+            assert await score(module, "Iran") == {"listed": "Y", "risk": "High"}
+            assert (await score(module, "Germany"))["listed"] is None
+
+            changed = await tool("update_lookup_table", {
+                "lookup_table": lookup["id"], "set_entries": {"Germany": "Low"}, "remove_keys": ["Cuba", "Nowhere"],
+                "activate": True})
+            assert changed["new_version"] is True and changed["activation"]["outcome"] == "active"
+            assert changed["changes"]["not_found"] == ["Nowhere"] and changed["entry_count"] == 2
+            # The published decision reads the newly active entries: nothing was published again.
+            assert await score(module, "Germany") == {"listed": "Y", "risk": "Low"}
+            assert (await score(module, "Cuba"))["listed"] is None
+
+            rollback = await tool("activate_lookup_table", {"lookup_table": lookup["id"], "version": "1.0"})
+            assert rollback["outcome"] == "active" and rollback["started_from"] == "1.0"
+            assert (await score(module, "Cuba"))["risk"] == "High"
+            again = await tool("activate_lookup_table", {"lookup_table": lookup["id"], "republish": True})
+            assert again["outcome"] == "republished"
+
+            listed = await tool("list_decisioning_assets", {"asset_type": "lookup_table", "filter_name": _SUFFIX})
+            assert lookup["id"] in {i["id"] for i in listed}
+            copy = await tool("copy_decisioning_asset", {
+                "asset_type": "lookup_table", "asset_id": lookup["id"], "name": f"{name}_copy", "folder": target})
+            created.append(("lookup_table", copy["id"]))
+            assert copy["entry_count"] == 2
+        finally:
+            async with Client(integration_mcp_server) as cleanup_client:
+                for asset_type, asset_id in reversed(created):
+                    with contextlib.suppress(Exception):
+                        await cleanup_client.call_tool(
+                            "delete_decisioning_asset", {"asset_type": asset_type, "asset_id": asset_id}
+                        )
+            if published.get("moduleId"):
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/microanalyticScore/modules/{published['moduleId']}")
+            if published.get("id"):
+                with contextlib.suppress(Exception):
+                    await _viya_delete(viya_token, f"/modelPublish/models/{published['id']}")
+            with contextlib.suppress(Exception):
+                await _viya_delete(viya_token, f"{target}?recursive=true")
 
 
 # -----------------------------------------------------------------------
@@ -1563,6 +2004,7 @@ TOOL_COVERAGE = {
     "list_files": "test_file_service_workflow",
     "upload_file": "test_file_service_workflow",
     "download_file": "test_file_service_workflow",
+    "find_folder": "test_decisioning_folder_placement",
     "list_reports": "test_report_workflow",
     "get_report": "test_report_workflow",
     "export_report": "test_report_workflow",
@@ -1609,6 +2051,28 @@ TOOL_COVERAGE = {
     "get_decision_flow_revision": "test_business_rules_and_decisions_workflow",
     "publish_decision_flow": "test_business_rules_and_decisions_workflow",
     "get_mas_module_step_signature": "test_business_rules_and_decisions_workflow",
+    "list_decisioning_assets": "test_decisioning_content_workflow",
+    "get_decisioning_asset": "test_decisioning_content_workflow",
+    "get_decisioning_asset_code": "test_decisioning_content_workflow",
+    "list_decisioning_asset_revisions": "test_decisioning_content_workflow",
+    "lock_decisioning_asset_revision": "test_decisioning_content_workflow",
+    "copy_decisioning_asset": "test_decisioning_content_workflow",
+    "delete_decisioning_asset": "test_decisioning_content_workflow",
+    "create_segmentation_tree": "test_decisioning_content_workflow",
+    "update_segmentation_tree": "test_decisioning_content_workflow",
+    "create_segmentation_tree_from_table": "test_decisioning_content_workflow",
+    "create_code_file": "test_decisioning_content_workflow",
+    "update_code_file": "test_decisioning_content_workflow",
+    "create_value_list": "test_decisioning_content_workflow",
+    "update_value_list_entries": "test_decisioning_content_workflow",
+    "get_lookup_table": "test_lookup_table_workflow",
+    "create_lookup_table": "test_lookup_table_workflow",
+    "update_lookup_table": "test_lookup_table_workflow",
+    "activate_lookup_table": "test_lookup_table_workflow",
+    "create_custom_function": "test_decisioning_content_workflow",
+    "update_custom_function": "test_decisioning_content_workflow",
+    "validate_custom_function": "test_decisioning_content_workflow",
+    "validate_decision_expression": "test_decisioning_content_workflow",
     "list_compute_contexts": "test_compute_discovery_workflow",
     "list_compute_libraries": "test_compute_discovery_workflow",
     "list_compute_tables": "test_compute_discovery_workflow",

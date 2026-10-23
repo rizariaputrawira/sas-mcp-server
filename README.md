@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 92 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 115 tools across 11 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -159,9 +159,10 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 4 | Batch Jobs & Async Execution |
 | 5 | Automated Machine Learning |
 | 6 | Model Management & Scoring |
-| 7 | Decisioning (SAS Intelligent Decisioning) |
+| 7 | Decisioning Foundation (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
 | 9 | Business Glossary (SAS Data Governance) |
+| 10 | Decisioning Advanced (SAS Intelligent Decisioning) — needs Tier 7 |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -170,7 +171,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 51 of the 92 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 57 of the 115 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -287,6 +288,7 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **list_files**: List files in the Viya Files Service
 - **upload_file**: Upload a file to the Viya Files Service, optionally into a Content folder (`parent_folder_uri`). Content comes from exactly one of `content` (inline text), `file_path` (read **server-side**, binary-safe — xlsx, zip, images — gated by `ALLOW_LOCAL_FILE_UPLOAD`), or `url` (server-side fetch)
 - **download_file**: Download file content
+- **find_folder**: Look up a SAS Content folder by path (`/Public/Content/Decisions`, `My Folder`, `My Folder/Risk`), ID or URI, and return its ID, URI, name and full path — for confirming a folder the user named, or getting the URI that `upload_file` and `MCP_DEFAULT_FOLDER` take
 
 #### Tier 3 — Reports & Visualization
 - **list_reports**: List Visual Analytics reports
@@ -318,10 +320,12 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **list_publishing_destinations**: List available scoring/publishing destinations, for use with **publish_ml_champion_model**
 - **list_mas_modules**: List published MAS modules
 - **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
-- **score_data**: Score data against a published model or decision
+- **score_data**: Score data against a published model or decision; for a decision published from the Intelligent Decisioning UI, whose inputs carry a trailing underscore, the plain names are accepted and mapped (`inputs_renamed`)
 
-#### Tier 7 — Decisioning (SAS Intelligent Decisioning)
-Build and manage SAS Intelligent Decisioning rule sets and decision flows end to end, then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
+#### Tier 7 — Decisioning Foundation (SAS Intelligent Decisioning)
+Build and run SAS Intelligent Decisioning decisions — rule sets that consult lookup tables, and decision flows that combine them with models, branches, conditions, assignments and sub-decisions — then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it. The life-cycle tools read, lock, copy and delete every kind of decisioning content. Segmentation trees, code files, value lists and custom functions are written with [Tier 10](#tier-10--decisioning-advanced-sas-intelligent-decisioning); enable both (`MCP_TIERS=...,7,10`) for everything — the server logs a warning when Tier 10 is on without Tier 7.
+
+Rule sets and decision flows are always stored in a SAS Content folder. The create tools take a `folder` — a path such as `/Public/Content/Decisions`, `My Folder` or `My Folder/Risk`, a folder ID, or a folder URI — and fall back to the deployment's `MCP_DEFAULT_FOLDER`. With neither, they refuse and the model asks the user where to store the asset. An update leaves an asset in its folder; one created before folders were required is filed by its next update, into the folder given or the default. Every create and update result carries `folder`, with the path the asset is in.
 
 *Business rules — rule sets:*
 - **create_business_ruleset** / **update_business_ruleset** / **get_business_ruleset** / **list_business_rulesets** / **delete_business_ruleset**: Manage rule sets (the input/output signature the rules operate on)
@@ -335,7 +339,23 @@ Build and manage SAS Intelligent Decisioning rule sets and decision flows end to
 - **create_decision_flow** / **update_decision_flow** / **get_decision_flow** / **list_decision_flows** / **delete_decision_flow**: Manage decision flows that chain rule set steps
 - **get_decision_flow_code**: Retrieve the generated DS2 execution code for a flow
 - **lock_decision_flow_revision** / **list_decision_flow_revisions** / **get_decision_flow_revision**: Lock, list, and fetch immutable decision revisions
-- **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**)
+- **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**). The code is generated for MAS, as SAS Intelligent Decisioning publishes it, so lookup tables work; the module's inputs keep the decision's variable names (the UI would add a trailing underscore, `credit_score_`)
+
+**create_decision_flow** and **update_decision_flow** take `steps`, in which each step names what it is and the server wires it: `{"type": "rule_set" | "segmentation_tree" | "code_file" | "decision", "id": ...}` (a sub-decision is a `decision`), `{"type": "model", "id": <model repository id>}`, `{"type": "assignment", "assignments": {"band": "GOLD"}}`, `{"type": "condition", "expression": "score >= 630", "on_true": [...], "on_false": [...]}` and `{"type": "branch", "branch_type": "range" | "equals" | "like", ...}`. A referenced object's newest locked revision is used (one is locked if there is none); step terms map to same-named decision variables, and a term the decision has none for is added as a variable of its type and direction, because Intelligent Decisioning validates and publishes a step only when every term is mapped. Mappings never cross type families. Assignments set constants (compute in a rule set or code file); a model is referenced by its model repository ID and its outputs become decision variables; range branches compare inclusively (`>= min`, `<= max`) and their cases must not share a value; steps nest inside branch cases and conditions. The tool's description carries a worked example of each. `rule_set_steps` still works for rule-set-only flows. The result's `steps_report` lists the revisions used, the variables added and anything to check.
+
+*Content — one life cycle for every kind:* `asset_type` is `rule_set`, `decision`, `segmentation_tree`, `code_file`, `value_list`, `lookup_table`, `custom_function` or `function_category`.
+- **list_decisioning_assets** / **get_decisioning_asset** / **delete_decisioning_asset**: List, read (with the folder it is in; a rule set with its rules, a code file with its code, a value list with its entries, a lookup table with its versions and active entries; content over 150,000 characters is summarised) and delete any of them — a lookup table that rule sets use is refused, naming them, because Viya would delete it and leave those rules invalid
+- **get_decisioning_asset_code**: The DS2 Viya generates for a rule set, decision or segmentation tree, or a code file's source
+- **list_decisioning_asset_revisions** / **lock_decisioning_asset_revision**: Revisions of rule sets, decisions, segmentation trees and code files. Locking freezes the current state and opens the next revision; the result says which revision was locked
+- **copy_decisioning_asset**: Copy a rule set (with its rules), decision, segmentation tree, code file, value list or lookup table into a folder
+- **validate_decision_expression**: Compile a DS2 expression — a rule condition or action, a branch, a condition step — against a signature and return the compiler's error lines, before it goes into a rule set or decision
+
+
+*Lookup tables* — keys and the value stored for each, which rules consult: a `lookup` condition tests whether a variable's value is a key, a `lookupValue` action assigns the value for a key. **create_business_rule** / **update_business_rule** take the lookup table by name and resolve its ID (a reference without one is stored as invalid), and report any condition or action Viya stored as invalid in `problems`. Rules read a lookup table's *active* version, which activation publishes to MAS and CAS; a decision already published uses newly activated entries on its next call, without being published again.
+- **get_lookup_table**: Versions (which one is active, which failed to activate and why), one version's entries — paged, filtered by key — and the rule sets that use the table
+- **create_lookup_table**: Create one from `{"key": "value"}` or a list of entries, with optional column labels, in a folder; `activate` publishes it right away
+- **update_lookup_table**: Add or overwrite entries, remove keys, or replace them all; rename; relabel. An active version is never changed — a new version is started from it — and rules keep the active one until the new one is activated (`activate` does that in the same call)
+- **activate_lookup_table**: Make a version the active one and wait for the publish to settle (`active`, `running` or `failed` with the reason); an earlier version (a rollback) or one whose activation failed is activated as a new version with its entries; `republish` copies the active version to MAS and CAS again
 
 #### Tier 8 — Workbench (Execute Code Only)
 - **execute_sas_code**: Execute SAS code snippets and retrieve execution results (log and listing output), plus a link to the [HTML results](#html-results) unless `html_results=false`. Runs in a reusable compute session that is kept warm across calls, so SAS state (WORK tables, macro variables, assigned librefs) persists between successive calls
@@ -370,6 +390,19 @@ Two things about the glossary are worth knowing before you start, because both a
 - **create_glossary_term_type** / **update_glossary_term_type** / **delete_glossary_term_type**: Define the template terms are created from — which custom attributes they carry, which are mandatory, and what values each accepts. An edit matches attributes by label and keeps each one's identifier, so terms already carrying a value do not lose it — to *rename* one, give its `attribute_id` alongside the new label, since a new label matches nothing and would otherwise mint a new attribute; delete refuses while terms still use the type
 
 Terms assigned this way also become searchable through Tier 1's **catalog_search** using the `Column.term:"<term name>"` facet on the `datasets` index, which returns the tables carrying a term without resolving individual columns.
+
+#### Tier 10 — Decisioning Advanced (SAS Intelligent Decisioning)
+SAS Intelligent Decisioning content beyond rule sets, for the decision flows of Tier 7: segmentation trees (written, or built from a strategy table), value lists, code files in DS2, Python and SQL, and DS2 custom functions that rule expressions call. Everything is stored in a folder, as in Tier 7. Using what this tier creates — as decision steps, and reading, locking, copying or deleting it — takes Tier 7, so enable the two together; with Tier 10 alone the server logs a warning at startup.
+
+*Segmentation trees:*
+- **create_segmentation_tree** / **update_segmentation_tree**: Write a tree: nodes test a variable against values (`"A;B"`), comparisons (`">=630"`), ranges (`"600<=v<630"`) or `"Other"`, in order; outcomes assign variables or run DS2. An update replaces only the parts given
+- **create_segmentation_tree_from_table**: Build one tree from a strategy table — one row per branch, a column per decision key — as FICO-style exports (TRIAD, Blaze) describe a strategy. Keys are tested in column order and only where they split; values are range lower bounds (`split="lower_bound"`) or exact values. Reads inline rows, a CSV, or a CAS table (load an Excel sheet with **upload_data**), can create a value list per variable, and reports leaves, outcomes and any rows whose path is identical but whose outcome differs
+
+*Value lists, code files and custom functions:*
+- **create_value_list** / **update_value_list_entries**: Value lists of values or numeric ranges (`"v>=630"`); a version in production is left alone and a new version takes the entries
+- **create_code_file** / **update_code_file**: DS2, Python or SQL code files; Viya reads the signature from the code, and `signature` supplies the types Python cannot state
+- **create_custom_function** / **update_custom_function**: DS2 custom functions that rule expressions call, checked to compile first; a category named but missing is created
+- **validate_custom_function**: Compile a custom function without saving it and return the compiler's error lines
 
 ### Prompt Templates
 
@@ -618,7 +651,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 92 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 115 tools and 9 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most

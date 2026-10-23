@@ -35,6 +35,7 @@ EXPECTED_TOOLS = [
     "list_files",
     "upload_file",
     "download_file",
+    "find_folder",
     "list_reports",
     "get_report",
     "export_report",
@@ -1154,12 +1155,14 @@ async def test_create_report_attaches_warnings(mcp_server_with_mock_client):
 
 async def test_business_ruleset_accepts_stringified_signature(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
+    _route_folder_gets(mock_client)
     async with Client(mcp) as client:
         await client.call_tool(
             "create_business_ruleset",
             {
                 "name": "RS",
                 "signature": '[{"name": "score", "dataType": "decimal", "direction": "input"}]',
+                "folder": "/folders/folders/f-1",
             },
         )
 
@@ -1873,9 +1876,42 @@ async def test_score_data_request(mcp_server_with_mock_client):
 # Business Rules & Decisions
 # -----------------------------------------------------------------------
 
+_FOLDER = {"id": "f-1", "name": "Decisions"}
+_FOLDER_ANCESTORS = [{"name": "Content"}, {"name": "Public"}]  # nearest first
+_FOLDER_INFO = {
+    "id": "f-1",
+    "uri": "/folders/folders/f-1",
+    "name": "Decisions",
+    "path": "/Public/Content/Decisions",
+}
+
+
+def _route_folder_gets(mock_client, asset_ancestors=None):
+    """Answer the folder lookups; every other GET gets the fixture's default.
+
+    *asset_ancestors* is what ``/folders/ancestors`` returns for an asset
+    (rule set or decision): a list for an asset in a folder, None for 404.
+    """
+    default = mock_client.get.return_value
+
+    def get(url, *args, **kwargs):
+        child = (kwargs.get("params") or {}).get("childUri", "")
+        if url.endswith("/folders/ancestors"):
+            if child == "/folders/folders/f-1":
+                return _make_mock_response(_FOLDER_ANCESTORS)
+            if asset_ancestors is None:
+                return _make_mock_response({"message": "not in a folder"}, status_code=404)
+            return _make_mock_response(asset_ancestors)
+        if url.endswith("/folders/folders/f-1"):
+            return _make_mock_response(_FOLDER)
+        return default
+
+    mock_client.get.side_effect = get
+
 
 async def test_create_business_ruleset_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
+    _route_folder_gets(mock_client)
     async with Client(mcp) as client:
         await client.call_tool(
             "create_business_ruleset",
@@ -1886,11 +1922,13 @@ async def test_create_business_ruleset_request(mcp_server_with_mock_client):
                     {"name": "risk_category", "dataType": "string", "direction": "output"},
                 ],
                 "description": "Derives risk category from credit score",
+                "folder": "/folders/folders/f-1",
             },
         )
 
     url = mock_client.post.call_args[0][0]
     assert "/businessRules/ruleSets" in url
+    assert mock_client.post.call_args[1]["params"] == {"parentFolderUri": "/folders/folders/f-1"}
     body = mock_client.post.call_args[1]["json"]
     assert body["name"] == "CreditRisk_ScoringRules"
     assert body["description"] == "Derives risk category from credit score"
@@ -1911,7 +1949,7 @@ async def test_update_business_ruleset_request(mcp_server_with_mock_client):
             },
         )
 
-    get_url = mock_client.get.call_args[0][0]
+    get_url = mock_client.get.call_args_list[0][0][0]
     assert "/businessRules/ruleSets/rs-1" in get_url
     put_url = mock_client.put.call_args[0][0]
     assert "/businessRules/ruleSets/rs-1" in put_url
@@ -1965,7 +2003,8 @@ async def test_lock_business_ruleset_revision_request(mcp_server_with_mock_clien
     async with Client(mcp) as client:
         await client.call_tool("lock_business_ruleset_revision", {"ruleset_id": "rs-1"})
 
-    get_headers = mock_client.get.call_args[1]["headers"]
+    # first GET reads the rule set with its rules; a revision listing follows the POST
+    get_headers = mock_client.get.call_args_list[0][1]["headers"]
     assert get_headers["Accept"] == "application/vnd.sas.business.rule.set.integral+json"
     post_url = mock_client.post.call_args[0][0]
     assert "/businessRules/ruleSets/rs-1/revisions" in post_url
@@ -2088,11 +2127,13 @@ async def test_delete_business_rule_request(mcp_server_with_mock_client):
 
 async def test_create_decision_flow_request(mcp_server_with_mock_client):
     mcp, mock_client = mcp_server_with_mock_client
+    _route_folder_gets(mock_client)
     async with Client(mcp) as client:
         await client.call_tool(
             "create_decision_flow",
             {
                 "name": "CreditRisk_Decision",
+                "folder": "/folders/folders/f-1",
                 "signature": [
                     {"name": "credit_score", "direction": "input", "dataType": "integer"},
                     {"name": "risk_category", "direction": "output", "dataType": "string"},
@@ -2114,6 +2155,7 @@ async def test_create_decision_flow_request(mcp_server_with_mock_client):
 
     url = mock_client.post.call_args[0][0]
     assert "/decisions/flows" in url
+    assert mock_client.post.call_args[1]["params"] == {"parentFolderUri": "/folders/folders/f-1"}
     body = mock_client.post.call_args[1]["json"]
     assert body["name"] == "CreditRisk_Decision"
     steps = body["flow"]["steps"]
@@ -2144,7 +2186,7 @@ async def test_update_decision_flow_request(mcp_server_with_mock_client):
             },
         )
 
-    get_url = mock_client.get.call_args[0][0]
+    get_url = mock_client.get.call_args_list[0][0][0]
     assert "/decisions/flows/dec-1" in get_url
     put_url = mock_client.put.call_args[0][0]
     assert "/decisions/flows/dec-1" in put_url
@@ -2215,7 +2257,7 @@ async def test_lock_decision_flow_revision_request(mcp_server_with_mock_client):
 
     post_url = mock_client.post.call_args[0][0]
     assert "/decisions/flows/dec-1/revisions" in post_url
-    sent_body = mock_client.post.call_args[1]["json"]
+    sent_body = json.loads(mock_client.post.call_args[1]["content"])
     assert sent_body["flow"]["steps"] == [{"type": "application/vnd.sas.decision.step.ruleset"}]
 
 
@@ -2263,6 +2305,9 @@ async def test_publish_decision_flow_request(mcp_server_with_mock_client):
     get_urls = [c.args[0] for c in mock_client.get.call_args_list]
     assert any("/decisions/flows/dec-1/revisions/rev-1/code" in u for u in get_urls)
     assert any("/microanalyticScore/jobs/job-1" in u for u in get_urls)
+    code_call = next(c for c in mock_client.get.call_args_list if c.args[0].endswith("/code"))
+    # CAS code (the default target) reads lookup tables as CAS formats, which MAS refuses.
+    assert code_call.kwargs["params"] == {"codeTarget": "microAnalyticService"}
 
     post_url = mock_client.post.call_args[0][0]
     assert "/modelPublish/models" in post_url
@@ -2348,6 +2393,171 @@ async def test_create_decision_flow_rejects_step_missing_key(mcp_server_with_moc
             assert "versionId" in str(e)
     assert raised, "expected a validation error naming the missing versionId key"
     mock_client.post.assert_not_called()
+
+
+_RULESET_ARGS = {
+    "name": "RS",
+    "signature": [{"name": "score", "dataType": "decimal", "direction": "input"}],
+}
+_FLOW_ARGS = {
+    "name": "D",
+    "signature": [{"name": "score", "direction": "input", "dataType": "decimal"}],
+    "rule_set_steps": [{"ruleSetId": "rs-1", "versionId": "v-1", "mappings": []}],
+}
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "what"),
+    [
+        ("create_business_ruleset", _RULESET_ARGS, "rule set"),
+        ("create_decision_flow", _FLOW_ARGS, "decision"),
+    ],
+)
+async def test_create_without_any_folder_is_refused(mcp_server_with_mock_client, monkeypatch, tool, args, what):
+    """No folder argument and no MCP_DEFAULT_FOLDER: refuse, and say to ask the user."""
+    monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", "")
+    mcp, mock_client = mcp_server_with_mock_client
+    async with Client(mcp) as client:
+        result = await client.call_tool(tool, args, raise_on_error=False)
+    assert result.is_error
+    message = result.content[0].text
+    assert f"No folder was given for the {what}" in message
+    assert "Ask the user where to store it" in message
+    mock_client.post.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "endpoint"),
+    [
+        ("create_business_ruleset", _RULESET_ARGS, "/businessRules/ruleSets"),
+        ("create_decision_flow", _FLOW_ARGS, "/decisions/flows"),
+    ],
+)
+async def test_create_uses_default_folder(mcp_server_with_mock_client, monkeypatch, tool, args, endpoint):
+    monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", "/folders/folders/f-1")
+    mcp, mock_client = mcp_server_with_mock_client
+    _route_folder_gets(mock_client)
+    async with Client(mcp) as client:
+        result = (await client.call_tool(tool, args)).data
+    assert mock_client.post.call_args[0][0].endswith(endpoint)
+    assert mock_client.post.call_args[1]["params"] == {"parentFolderUri": "/folders/folders/f-1"}
+    assert result["folder"] == _FOLDER_INFO
+
+
+async def test_create_folder_argument_beats_default(mcp_server_with_mock_client, monkeypatch):
+    monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", "/folders/folders/@myFolder")
+    mcp, mock_client = mcp_server_with_mock_client
+    _route_folder_gets(mock_client)
+    async with Client(mcp) as client:
+        await client.call_tool("create_business_ruleset", {**_RULESET_ARGS, "folder": "/folders/folders/f-1"})
+    assert mock_client.post.call_args[1]["params"] == {"parentFolderUri": "/folders/folders/f-1"}
+    fetched = [c[0][0] for c in mock_client.get.call_args_list]
+    assert not any("@myFolder" in url for url in fetched)
+
+
+async def test_create_resolves_a_folder_path(mcp_server_with_mock_client):
+    """A path is looked up with POST /folders/paths; its id becomes parentFolderUri."""
+    mcp, mock_client = mcp_server_with_mock_client
+    path_resp = _make_mock_response({"id": "f-9", "name": "MCP Created"})
+    created = _make_mock_response({"id": "rs-1"}, status_code=201)
+    mock_client.post.side_effect = [path_resp, created]
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "create_business_ruleset", {**_RULESET_ARGS, "folder": "/Public/Content/MCP Created"}
+            )
+        ).data
+    lookup, create = mock_client.post.call_args_list
+    assert lookup[0][0].endswith("/folders/paths")
+    assert lookup[1]["json"] == {"items": ["Public", "Content", "MCP Created"], "contentType": "folder"}
+    assert create[1]["params"] == {"parentFolderUri": "/folders/folders/f-9"}
+    assert result["folder"] == {
+        "id": "f-9",
+        "uri": "/folders/folders/f-9",
+        "name": "MCP Created",
+        "path": "/Public/Content/MCP Created",
+    }
+
+
+async def test_create_with_unknown_path_creates_nothing(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    missing = _make_mock_response(
+        {"message": 'The item "Nope" could not be found in the path "Public".'}, status_code=404
+    )
+    mock_client.post.side_effect = [missing]
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "create_decision_flow", {**_FLOW_ARGS, "folder": "/Public/Nope"}, raise_on_error=False
+        )
+    assert result.is_error
+    assert "There is no folder '/Public/Nope'" in result.content[0].text
+    assert "could not be found" in result.content[0].text
+    assert mock_client.post.call_count == 1  # the lookup only, no create
+
+
+async def test_update_files_a_folderless_ruleset(mcp_server_with_mock_client):
+    """An update to a rule set in no folder files it into the folder given."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e"', "Content-Type": "application/json"}
+    _route_folder_gets(mock_client, asset_ancestors=None)
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "update_business_ruleset",
+                {"ruleset_id": "rs-1", **_RULESET_ARGS, "folder": "/folders/folders/f-1"},
+            )
+        ).data
+    member = mock_client.post.call_args
+    assert member[0][0].endswith("/folders/folders/f-1/members")
+    assert member[1]["json"] == {
+        "uri": "/businessRules/ruleSets/rs-1",
+        "type": "child",
+        "name": "RS",
+        "contentType": "ruleSet",
+    }
+    assert result["folder"] == {**_FOLDER_INFO, "status": "filed"}
+
+
+async def test_update_keeps_existing_folder(mcp_server_with_mock_client):
+    """A decision already in a folder stays there, even when another folder is named."""
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e"', "Content-Type": "application/json"}
+    in_folder = [{"id": "f-7", "name": "MCP Created"}, {"name": "Content"}, {"name": "Public"}]
+    _route_folder_gets(mock_client, asset_ancestors=in_folder)
+    async with Client(mcp) as client:
+        result = (
+            await client.call_tool(
+                "update_decision_flow",
+                {"decision_id": "dec-1", **_FLOW_ARGS, "folder": "/folders/folders/f-1"},
+            )
+        ).data
+    mock_client.post.assert_not_called()
+    folder = result["folder"]
+    assert folder["status"] == "unchanged"
+    assert folder["path"] == "/Public/Content/MCP Created"
+    assert folder["uri"] == "/folders/folders/f-7"
+    assert "keeps it" in folder["note"]
+
+
+async def test_update_of_folderless_asset_without_folder_still_succeeds(mcp_server_with_mock_client, monkeypatch):
+    monkeypatch.setattr("sas_mcp_server.config.MCP_DEFAULT_FOLDER", "")
+    mcp, mock_client = mcp_server_with_mock_client
+    mock_client.get.return_value.headers = {"etag": '"e"', "Content-Type": "application/json"}
+    _route_folder_gets(mock_client, asset_ancestors=None)
+    async with Client(mcp) as client:
+        result = (await client.call_tool("update_business_ruleset", {"ruleset_id": "rs-1", **_RULESET_ARGS})).data
+    mock_client.put.assert_called_once()
+    mock_client.post.assert_not_called()
+    assert result["folder"]["status"] == "none"
+    assert "Ask the user where to store it" in result["folder"]["note"]
+
+
+async def test_find_folder_request(mcp_server_with_mock_client):
+    mcp, mock_client = mcp_server_with_mock_client
+    _route_folder_gets(mock_client)
+    async with Client(mcp) as client:
+        result = (await client.call_tool("find_folder", {"folder": "/folders/folders/f-1"})).data
+    assert result == _FOLDER_INFO
 
 
 async def test_get_mas_module_step_signature_request(mcp_server_with_mock_client):
