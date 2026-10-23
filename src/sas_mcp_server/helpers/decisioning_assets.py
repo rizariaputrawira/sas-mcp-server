@@ -136,6 +136,37 @@ SERVER_FIELDS = frozenset(
 )
 
 
+# A result bigger than this is summarised instead of returned whole: a
+# 3,000-leaf segmentation tree is ~600 KB of JSON, far more than a model context
+# should carry to answer "what is in it".
+MAX_CONTENT_CHARS = 150_000
+_HEAVY = ("node", "flow", "rules", "code", "entries", "outcomes", "codeFiles", "booleanExpressions", "matrices")
+
+
+def summarize(data: dict[str, Any]) -> dict[str, Any]:
+    out = {k: v for k, v in data.items() if k not in _HEAVY and k != "links"}
+    for key in _HEAVY:
+        value = data.get(key)
+        if isinstance(value, list):
+            out[f"{key}_count"] = len(value)
+    if isinstance(data.get("node"), dict):
+        nodes, leaves = 0, 0
+        stack = [data["node"]]
+        while stack:
+            node = stack.pop()
+            nodes += 1
+            for value_node in node.get("valueNodes") or []:
+                if value_node.get("next"):
+                    stack.append(value_node["next"])
+                else:
+                    leaves += 1
+        root_variable = data["node"].get("variableName")
+        out["node_summary"] = {"split_nodes": nodes, "leaves": leaves, "root_variable": root_variable}
+    if isinstance(data.get("flow"), dict):
+        out["flow_step_types"] = [s.get("type", "").rsplit(".", 1)[-1] for s in data["flow"].get("steps", [])]
+    return out
+
+
 def kind_for(asset_type: str) -> AssetKind:
     try:
         return ASSET_KINDS[asset_type]

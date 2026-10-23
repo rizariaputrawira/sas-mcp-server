@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 115 tools across 10 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 115 tools across 11 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
 - Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -156,9 +156,10 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 4 | Batch Jobs & Async Execution |
 | 5 | Automated Machine Learning |
 | 6 | Model Management & Scoring |
-| 7 | Decisioning (SAS Intelligent Decisioning) |
+| 7 | Decisioning Starter (SAS Intelligent Decisioning) |
 | 8 | Workbench (Execute Code Only) |
 | 9 | Business Glossary (SAS Data Governance) |
+| 10 | Decisioning Advanced (SAS Intelligent Decisioning) — needs Tier 7 |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -317,8 +318,8 @@ The headings below match the numbered **tiers** above, so `MCP_TIERS` maps direc
 - **get_mas_module_step_signature**: Inspect a published MAS module step's input/output variable signature before scoring
 - **score_data**: Score data against a published model or decision; for a decision published from the Intelligent Decisioning UI, whose inputs carry a trailing underscore, the plain names are accepted and mapped (`inputs_renamed`)
 
-#### Tier 7 — Decisioning (SAS Intelligent Decisioning)
-Build SAS Intelligent Decisioning content end to end — rule sets, custom functions, segmentation trees, value lists, lookup tables, code files (DS2, Python, SQL) and decision flows that combine them with models, branches, conditions and assignments — then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it.
+#### Tier 7 — Decisioning Starter (SAS Intelligent Decisioning)
+Build and run SAS Intelligent Decisioning decisions — rule sets that consult lookup tables, and decision flows that combine them with models, branches, conditions, assignments and sub-decisions — then publish a flow to Micro Analytic Score (MAS) so **score_data** can execute it. The life-cycle tools read, lock, copy and delete every kind of decisioning content. Segmentation trees, code files, value lists and custom functions are written with [Tier 10](#tier-10--decisioning-advanced-sas-intelligent-decisioning); enable both (`MCP_TIERS=...,7,10`) for everything — the server logs a warning when Tier 10 is on without Tier 7.
 
 Rule sets and decision flows are always stored in a SAS Content folder. The create tools take a `folder` — a path such as `/Public/Content/Decisions`, `My Folder` or `My Folder/Risk`, a folder ID, or a folder URI — and fall back to the deployment's `MCP_DEFAULT_FOLDER`. With neither, they refuse and the model asks the user where to store the asset. An update leaves an asset in its folder; one created before folders were required is filed by its next update, into the folder given or the default. Every create and update result carries `folder`, with the path the asset is in.
 
@@ -336,23 +337,15 @@ Rule sets and decision flows are always stored in a SAS Content folder. The crea
 - **lock_decision_flow_revision** / **list_decision_flow_revisions** / **get_decision_flow_revision**: Lock, list, and fetch immutable decision revisions
 - **publish_decision_flow**: Publish a locked decision revision to a MAS destination, polling to completion and returning the server-generated MAS `moduleId` (directly usable with **get_mas_module_step_signature** / **score_data**). The code is generated for MAS, as SAS Intelligent Decisioning publishes it, so lookup tables work; the module's inputs keep the decision's variable names (the UI would add a trailing underscore, `credit_score_`)
 
-**create_decision_flow** and **update_decision_flow** take `steps`, in which each step names what it is and the server wires it: `{"type": "rule_set" | "segmentation_tree" | "code_file" | "decision", "id": ...}` (a sub-decision is a `decision`), `{"type": "model", "id": <model repository id>}`, `{"type": "assignment", "assignments": {"band": "GOLD"}}`, `{"type": "condition", "expression": "score >= 630", "on_true": [...], "on_false": [...]}` and `{"type": "branch", "branch_type": "range" | "equals" | "like", ...}`. A referenced object's newest locked revision is used (one is locked if there is none); step terms map to same-named decision variables, and a term the decision has none for is added as a variable of its type and direction, because Intelligent Decisioning validates and publishes a step only when every term is mapped. Mappings never cross type families. `rule_set_steps` still works for rule-set-only flows. The result's `steps_report` lists the revisions used, the variables added and anything to check.
+**create_decision_flow** and **update_decision_flow** take `steps`, in which each step names what it is and the server wires it: `{"type": "rule_set" | "segmentation_tree" | "code_file" | "decision", "id": ...}` (a sub-decision is a `decision`), `{"type": "model", "id": <model repository id>}`, `{"type": "assignment", "assignments": {"band": "GOLD"}}`, `{"type": "condition", "expression": "score >= 630", "on_true": [...], "on_false": [...]}` and `{"type": "branch", "branch_type": "range" | "equals" | "like", ...}`. A referenced object's newest locked revision is used (one is locked if there is none); step terms map to same-named decision variables, and a term the decision has none for is added as a variable of its type and direction, because Intelligent Decisioning validates and publishes a step only when every term is mapped. Mappings never cross type families. Assignments set constants (compute in a rule set or code file); a model is referenced by its model repository ID and its outputs become decision variables; range branches compare inclusively (`>= min`, `<= max`) and their cases must not share a value; steps nest inside branch cases and conditions. The tool's description carries a worked example of each. `rule_set_steps` still works for rule-set-only flows. The result's `steps_report` lists the revisions used, the variables added and anything to check.
 
 *Content — one life cycle for every kind:* `asset_type` is `rule_set`, `decision`, `segmentation_tree`, `code_file`, `value_list`, `lookup_table`, `custom_function` or `function_category`.
 - **list_decisioning_assets** / **get_decisioning_asset** / **delete_decisioning_asset**: List, read (with the folder it is in; a rule set with its rules, a code file with its code, a value list with its entries, a lookup table with its versions and active entries; content over 150,000 characters is summarised) and delete any of them — a lookup table that rule sets use is refused, naming them, because Viya would delete it and leave those rules invalid
 - **get_decisioning_asset_code**: The DS2 Viya generates for a rule set, decision or segmentation tree, or a code file's source
 - **list_decisioning_asset_revisions** / **lock_decisioning_asset_revision**: Revisions of rule sets, decisions, segmentation trees and code files. Locking freezes the current state and opens the next revision; the result says which revision was locked
 - **copy_decisioning_asset**: Copy a rule set (with its rules), decision, segmentation tree, code file, value list or lookup table into a folder
+- **validate_decision_expression**: Compile a DS2 expression — a rule condition or action, a branch, a condition step — against a signature and return the compiler's error lines, before it goes into a rule set or decision
 
-*Segmentation trees:*
-- **create_segmentation_tree** / **update_segmentation_tree**: Write a tree: nodes test a variable against values (`"A;B"`), comparisons (`">=630"`), ranges (`"600<=v<630"`) or `"Other"`, in order; outcomes assign variables or run DS2. An update replaces only the parts given
-- **create_segmentation_tree_from_table**: Build one tree from a strategy table — one row per branch, a column per decision key — as FICO-style exports (TRIAD, Blaze) describe a strategy. Keys are tested in column order and only where they split; values are range lower bounds (`split="lower_bound"`) or exact values. Reads inline rows, a CSV, or a CAS table (load an Excel sheet with **upload_data**), can create a value list per variable, and reports leaves, outcomes and any rows whose path is identical but whose outcome differs
-
-*Value lists, code files and custom functions:*
-- **create_value_list** / **update_value_list_entries**: Value lists of values or numeric ranges (`"v>=630"`); a version in production is left alone and a new version takes the entries
-- **create_code_file** / **update_code_file**: DS2, Python or SQL code files; Viya reads the signature from the code, and `signature` supplies the types Python cannot state
-- **create_custom_function** / **update_custom_function**: DS2 custom functions that rule expressions call, checked to compile first; a category named but missing is created
-- **validate_custom_function** / **validate_decision_expression**: Compile a function or a DS2 expression (a rule condition or action, a branch, a condition step) and return the compiler's error lines
 
 *Lookup tables* — keys and the value stored for each, which rules consult: a `lookup` condition tests whether a variable's value is a key, a `lookupValue` action assigns the value for a key. **create_business_rule** / **update_business_rule** take the lookup table by name and resolve its ID (a reference without one is stored as invalid), and report any condition or action Viya stored as invalid in `problems`. Rules read a lookup table's *active* version, which activation publishes to MAS and CAS; a decision already published uses newly activated entries on its next call, without being published again.
 - **get_lookup_table**: Versions (which one is active, which failed to activate and why), one version's entries — paged, filtered by key — and the rule sets that use the table
@@ -393,6 +386,19 @@ Two things about the glossary are worth knowing before you start, because both a
 - **create_glossary_term_type** / **update_glossary_term_type** / **delete_glossary_term_type**: Define the template terms are created from — which custom attributes they carry, which are mandatory, and what values each accepts. An edit matches attributes by label and keeps each one's identifier, so terms already carrying a value do not lose it — to *rename* one, give its `attribute_id` alongside the new label, since a new label matches nothing and would otherwise mint a new attribute; delete refuses while terms still use the type
 
 Terms assigned this way also become searchable through Tier 1's **catalog_search** using the `Column.term:"<term name>"` facet on the `datasets` index, which returns the tables carrying a term without resolving individual columns.
+
+#### Tier 10 — Decisioning Advanced (SAS Intelligent Decisioning)
+SAS Intelligent Decisioning content beyond rule sets, for the decision flows of Tier 7: segmentation trees (written, or built from a strategy table), value lists, code files in DS2, Python and SQL, and DS2 custom functions that rule expressions call. Everything is stored in a folder, as in Tier 7. Using what this tier creates — as decision steps, and reading, locking, copying or deleting it — takes Tier 7, so enable the two together; with Tier 10 alone the server logs a warning at startup.
+
+*Segmentation trees:*
+- **create_segmentation_tree** / **update_segmentation_tree**: Write a tree: nodes test a variable against values (`"A;B"`), comparisons (`">=630"`), ranges (`"600<=v<630"`) or `"Other"`, in order; outcomes assign variables or run DS2. An update replaces only the parts given
+- **create_segmentation_tree_from_table**: Build one tree from a strategy table — one row per branch, a column per decision key — as FICO-style exports (TRIAD, Blaze) describe a strategy. Keys are tested in column order and only where they split; values are range lower bounds (`split="lower_bound"`) or exact values. Reads inline rows, a CSV, or a CAS table (load an Excel sheet with **upload_data**), can create a value list per variable, and reports leaves, outcomes and any rows whose path is identical but whose outcome differs
+
+*Value lists, code files and custom functions:*
+- **create_value_list** / **update_value_list_entries**: Value lists of values or numeric ranges (`"v>=630"`); a version in production is left alone and a new version takes the entries
+- **create_code_file** / **update_code_file**: DS2, Python or SQL code files; Viya reads the signature from the code, and `signature` supplies the types Python cannot state
+- **create_custom_function** / **update_custom_function**: DS2 custom functions that rule expressions call, checked to compile first; a category named but missing is created
+- **validate_custom_function**: Compile a custom function without saving it and return the compiler's error lines
 
 ### Prompt Templates
 

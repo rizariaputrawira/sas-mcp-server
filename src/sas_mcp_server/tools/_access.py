@@ -174,21 +174,11 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "lock_decisioning_asset_revision",
         "copy_decisioning_asset",
         "delete_decisioning_asset",
-        "create_segmentation_tree",
-        "update_segmentation_tree",
-        "create_segmentation_tree_from_table",
-        "create_code_file",
-        "update_code_file",
-        "create_value_list",
-        "update_value_list_entries",
         "create_lookup_table",
         "update_lookup_table",
         "activate_lookup_table",
-        "create_custom_function",
-        "update_custom_function",
-        # Both compile DS2 in a SAS session to answer: no state changes, but
+        # Compiles DS2 in a SAS session to answer: no state change, but
         # server-side work, which the strict definition excludes.
-        "validate_custom_function",
         "validate_decision_expression",
         # Tier 9
         "create_glossary_term",
@@ -203,6 +193,17 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         # Creates/removes a catalog relationship between a term and a column.
         "assign_glossary_term",
         "unassign_glossary_term",
+        # Tier 10
+        "create_segmentation_tree",
+        "update_segmentation_tree",
+        "create_segmentation_tree_from_table",
+        "create_code_file",
+        "update_code_file",
+        "create_value_list",
+        "update_value_list_entries",
+        "create_custom_function",
+        "update_custom_function",
+        "validate_custom_function",  # compiles DS2 in a SAS session, like validate_decision_expression
     }
 )
 

@@ -1,13 +1,14 @@
 # Copyright © 2025, SAS Institute Inc., Cary, NC, USA.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tier 7 — content tools for SAS Intelligent Decisioning beyond rule sets and flows.
+"""Tier 10 — Decisioning Advanced: SAS Intelligent Decisioning content beyond rule sets.
 
-Segmentation trees, code files (DS2, Python, SQL), value lists, custom functions
-and DS2 validation, plus one set of life-cycle tools — list, get, code,
-revisions, lock, copy, delete — that work for every kind of decisioning content,
-lookup tables included, through :mod:`sas_mcp_server.helpers.decisioning_assets`. Registered by
-:func:`sas_mcp_server.tools.decisioning.register` as part of the same tier.
+Segmentation trees (written, or built from a strategy table), code files (DS2,
+Python, SQL), value lists and DS2 custom functions. Tier 7 (Decisioning Starter)
+holds what uses them — decision flows, which take them as steps — and the
+life-cycle tools that read, lock, copy and delete them, so this tier is meant to
+be enabled together with Tier 7; :func:`sas_mcp_server.tools.register_tools`
+warns when it is not.
 
 Everything these tools create goes into a SAS Content folder: the ``folder``
 argument, else ``MCP_DEFAULT_FOLDER``, else the call is refused and asks for one
@@ -16,7 +17,7 @@ argument, else ``MCP_DEFAULT_FOLDER``, else the call is refused and asks for one
 
 import contextlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context, FastMCP
@@ -25,217 +26,18 @@ from pydantic import BeforeValidator
 from ..env import env_bool
 from ..helpers import decisioning_assets as assets
 from ..helpers import segmentation_tree_helpers as trees
-from ..helpers.folder_helpers import current_folder, keep_in_folder, resolve_target_folder
-from ._common import coerce_json_dict, coerce_json_list
+from ..helpers.folder_helpers import keep_in_folder, resolve_target_folder
+from ._common import coerce_json_dict, coerce_json_list, make_session_helpers
 
 DictListParam = Annotated[list[dict[str, Any]], BeforeValidator(coerce_json_list)]
 AnyListParam = Annotated[list[Any], BeforeValidator(coerce_json_list)]
 DictParam = Annotated[dict[str, Any], BeforeValidator(coerce_json_dict)]
-AssetTypeParam = Literal[
-    "rule_set", "decision", "segmentation_tree", "code_file", "value_list", "lookup_table", "custom_function",
-    "function_category",
-]
-RevisedAssetParam = Literal["rule_set", "decision", "segmentation_tree", "code_file"]
-
-# A result bigger than this is summarised instead of returned whole: a
-# 3,000-leaf segmentation tree is ~600 KB of JSON, far more than a model context
-# should carry to answer "what is in it".
-MAX_CONTENT_CHARS = 150_000
-_HEAVY = ("node", "flow", "rules", "code", "entries", "outcomes", "codeFiles", "booleanExpressions", "matrices")
 
 
-def _summary(data: dict[str, Any]) -> dict[str, Any]:
-    out = {k: v for k, v in data.items() if k not in _HEAVY and k != "links"}
-    for key in _HEAVY:
-        value = data.get(key)
-        if isinstance(value, list):
-            out[f"{key}_count"] = len(value)
-    if isinstance(data.get("node"), dict):
-        nodes, leaves = 0, 0
-        stack = [data["node"]]
-        while stack:
-            node = stack.pop()
-            nodes += 1
-            for value_node in node.get("valueNodes") or []:
-                if value_node.get("next"):
-                    stack.append(value_node["next"])
-                else:
-                    leaves += 1
-        root_variable = data["node"].get("variableName")
-        out["node_summary"] = {"split_nodes": nodes, "leaves": leaves, "root_variable": root_variable}
-    if isinstance(data.get("flow"), dict):
-        out["flow_step_types"] = [s.get("type", "").rsplit(".", 1)[-1] for s in data["flow"].get("steps", [])]
-    return out
+def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> None:
+    """Register Tier 10 (Decisioning Advanced) tools on *mcp*."""
 
-
-def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> None:
-    """Register the decisioning content tools on *mcp* (part of Tier 7)."""
-
-    # --- one life cycle for every kind ---------------------------------------------------
-
-    @mcp.tool()
-    async def list_decisioning_assets(
-        asset_type: AssetTypeParam, ctx: Context, limit: int = 20, filter_name: str | None = None
-    ) -> list[dict[str, Any]]:
-        """List SAS Intelligent Decisioning content of one kind, optionally filtered by name.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list, lookup_table, custom_function or function_category.
-            limit: Maximum number of results (default 20).
-            filter_name: Optional substring of the name.
-        """
-        async with viya_session("list_decisioning_assets", ctx) as client:
-            return await assets.list_assets(client, asset_type, limit=limit, filter_name=filter_name)
-
-    @mcp.tool()
-    async def get_decisioning_asset(
-        asset_type: AssetTypeParam,
-        asset_id: str,
-        ctx: Context,
-        revision_id: str | None = None,
-        summary_only: bool = False,
-    ) -> dict[str, Any]:
-        """Fetch one piece of decisioning content, or one of its revisions, with the folder it is in.
-
-        A rule set comes with its rules, a code file with its code, a value
-        list with the entries of its newest version, a lookup table with its
-        versions, the entries of its active one (get_lookup_table pages and
-        filters them) and the rule sets that use it. Content larger than
-        150,000 characters — a big segmentation tree — is summarised (counts,
-        root variable) instead of returned whole; ``summary_only`` asks for the
-        summary of anything.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list, lookup_table, custom_function or function_category.
-            asset_id: The ID (not the name — list_decisioning_assets returns
-                both); a lookup table may also be given by its exact name.
-            revision_id: A revision to read instead of the current state (for a
-                lookup table: a version ID or label).
-            summary_only: Return the summary rather than the full content.
-        """
-        kind = assets.kind_for(asset_type)
-        async with viya_session("get_decisioning_asset", ctx) as client:
-            data = await assets.get_asset(client, asset_type, asset_id, revision_id)
-            if kind.key not in ("custom_function", "function_category"):
-                data["folder"] = await current_folder(client, assets.asset_path(kind, data.get("id") or asset_id))
-        if summary_only or len(json.dumps(data, default=str)) > MAX_CONTENT_CHARS:
-            summary = _summary(data)
-            if not summary_only:
-                summary["note"] = (
-                    "The content is too large to return whole, so this is a summary. "
-                    "get_decisioning_asset_code returns the generated code."
-                )
-            return summary
-        return data
-
-    @mcp.tool()
-    async def get_decisioning_asset_code(
-        asset_type: RevisedAssetParam, asset_id: str, ctx: Context, revision_id: str | None = None
-    ) -> str:
-        """The DS2 code Viya generates for a rule set, decision or segmentation tree, or a code file's source.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree or code_file.
-            asset_id: The ID.
-            revision_id: A revision instead of the current state.
-        """
-        async with viya_session("get_decisioning_asset_code", ctx) as client:
-            return await assets.get_code(client, asset_type, asset_id, revision_id)
-
-    @mcp.tool()
-    async def list_decisioning_asset_revisions(
-        asset_type: RevisedAssetParam, asset_id: str, ctx: Context, limit: int = 20
-    ) -> list[dict[str, Any]]:
-        """List the revisions of a rule set, decision, segmentation tree or code file, newest first.
-
-        The newest revision is the working one; every other one is locked.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree or code_file.
-            asset_id: The ID.
-            limit: Maximum number of revisions (default 20).
-        """
-        async with viya_session("list_decisioning_asset_revisions", ctx) as client:
-            return await assets.list_revisions(client, asset_type, asset_id, limit=limit)
-
-    @mcp.tool()
-    async def lock_decisioning_asset_revision(
-        asset_type: RevisedAssetParam,
-        asset_id: str,
-        ctx: Context,
-        revision_type: Literal["minor", "major"] = "minor",
-    ) -> dict[str, Any]:
-        """Freeze the current state of a rule set, decision, segmentation tree or code file as a locked revision.
-
-        Viya locks the revision that was current and opens the next one for
-        editing (1.0 is locked, 1.1 is open). ``locked_revision`` is the frozen
-        state: reference it from a decision step or publish it. Later edits go
-        to ``working_revision`` and do not change what was locked.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree or code_file.
-            asset_id: The ID.
-            revision_type: "minor" for iterative changes, "major" for an approved milestone.
-        """
-        async with viya_session("lock_decisioning_asset_revision", ctx) as client:
-            result = await assets.lock_revision(client, asset_type, asset_id, revision_type)
-            result.pop("working", None)
-            return result
-
-    @mcp.tool()
-    async def copy_decisioning_asset(
-        asset_type: AssetTypeParam,
-        asset_id: str,
-        name: str,
-        ctx: Context,
-        folder: str | None = None,
-        revision_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Copy a rule set (with its rules), decision, segmentation tree, code file, value list or lookup table.
-
-        Custom functions and function categories cannot be copied. A lookup
-        table's copy holds the entries of its active version (or of
-        ``revision_id``, a version ID or label) and is not active itself.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list or lookup_table.
-            asset_id: The ID of the source.
-            name: The name of the copy.
-            folder: Where to store the copy: a folder path such as
-                ``/Public/Content/Decisions``, ``My Folder``, a folder ID, or a
-                folder URI. Omit to use the default folder; if there is none,
-                ask the user.
-            revision_id: Copy this revision instead of the current state.
-        """
-        kind = assets.kind_for(asset_type)
-        async with viya_session("copy_decisioning_asset", ctx) as client:
-            target = await resolve_target_folder(client, folder, kind.what)
-            created = await assets.copy_asset(
-                client, asset_type, asset_id, name=name, folder=target, revision_id=revision_id
-            )
-        result = _summary(created)
-        result["folder"] = target
-        return result
-
-    @mcp.tool()
-    async def delete_decisioning_asset(asset_type: AssetTypeParam, asset_id: str, ctx: Context) -> dict[str, Any]:
-        """Permanently delete a piece of decisioning content and all its revisions.
-
-        Something still in use — a rule set or code file a decision references,
-        a category that still holds functions — is refused by Viya. A lookup
-        table that rule sets use is refused here, naming them: Viya would
-        delete it and leave those rules invalid.
-
-        Args:
-            asset_type: rule_set, decision, segmentation_tree, code_file,
-                value_list, lookup_table, custom_function or function_category.
-            asset_id: The ID to delete.
-        """
-        async with viya_session("delete_decisioning_asset", ctx) as client:
-            return await assets.delete_asset(client, asset_type, asset_id)
+    viya_session, _ = make_session_helpers(get_token)
 
     # --- segmentation trees -----------------------------------------------------------
 
@@ -300,7 +102,7 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
             )
         result = created.json()
         result["folder"] = target
-        return _summary(result) if len(json.dumps(result)) > MAX_CONTENT_CHARS else result
+        return assets.summarize(result) if len(json.dumps(result)) > assets.MAX_CONTENT_CHARS else result
 
     @mcp.tool()
     async def update_segmentation_tree(
@@ -356,7 +158,7 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
                 client, asset_uri=path, name=merged["name"], content_type="segmentationTree",
                 folder=folder, what="segmentation tree",
             )
-        return _summary(updated) if len(json.dumps(updated)) > MAX_CONTENT_CHARS else updated
+        return assets.summarize(updated) if len(json.dumps(updated)) > assets.MAX_CONTENT_CHARS else updated
 
     @mcp.tool()
     async def create_segmentation_tree_from_table(
@@ -683,21 +485,3 @@ def register_content_tools(mcp: FastMCP, viya_session: Callable[..., Any]) -> No
                     raise assets.DecisioningError(f"No function category {category!r}.")
                 category_id = found["id"]
             return await assets.validate_function(client, code, category_id)
-
-    @mcp.tool()
-    async def validate_decision_expression(
-        expression: str, ctx: Context, signature: DictListParam | None = None
-    ) -> dict[str, Any]:
-        """Check that a DS2 expression compiles: a rule condition or action, a branch or a condition step.
-
-        The expression may use the variables in ``signature``, DS2 functions
-        and custom functions. Returns ``valid`` and the compiler's error and
-        warning lines. A variable the signature does not declare is a warning
-        (DS2 creates it), not an error.
-
-        Args:
-            expression: The expression, e.g. ``risk_band(credit_score) = 'LOW'``.
-            signature: The variables it uses, ``[{"name", "dataType", "direction"}]``.
-        """
-        async with viya_session("validate_decision_expression", ctx) as client:
-            return await assets.validate_expression(client, expression, signature)

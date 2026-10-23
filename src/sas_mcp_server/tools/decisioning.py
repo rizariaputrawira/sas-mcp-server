@@ -40,7 +40,7 @@ from ..viya_client import (
     return_items,
 )
 from ._common import coerce_json_list, make_session_helpers
-from .decisioning_content import register_content_tools
+from .decisioning_lifecycle import register_lifecycle_tools
 from .decisioning_lookups import register_lookup_tools
 
 # Tolerant alias for list params some MCP clients deliver as JSON-encoded
@@ -454,8 +454,52 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         """Create a SAS Intelligent Decisioning flow: rule sets, segmentation trees, code files,
         models, sub-decisions, assignments, conditions and branches.
 
-        Give the flow as ``steps`` (every step kind, wired by name — see the
-        argument) or, as before, ``rule_set_steps`` (rule sets only, wired by hand).
+        Give the flow as ``steps`` (every step kind, wired by name) or, as
+        before, ``rule_set_steps`` (rule sets only, wired by hand). A flow that
+        sets defaults, scores a model, branches on its score and checks the
+        result::
+
+            steps = [
+                {"type": "assignment", "name": "Defaults",
+                 "assignments": {"offer": "NONE", "credit_limit": 0}},
+                {"type": "model", "id": "<model repository id>"},
+                {"type": "branch", "branch_type": "range", "variable": "P_BAD1", "cases": [
+                    {"label": "Low risk", "max": 0.1999, "steps": [
+                        {"type": "assignment", "assignments": {"offer": "GOLD", "credit_limit": 10000}}]},
+                    {"label": "Medium risk", "min": 0.2, "max": 0.4999, "steps": [
+                        {"type": "rule_set", "id": "<rule set id>"}]}],
+                 "default": [{"type": "assignment", "assignments": {"offer": "DECLINE"}}]},
+                {"type": "condition", "expression": "offer = 'GOLD'",
+                 "on_true": [{"type": "code_file", "id": "<code file id>"}], "on_false": []},
+            ]
+
+        Steps nest: a branch case, a branch default and either side of a
+        condition hold steps of any kind, branches and conditions included.
+
+        * **Assignment** — ``assignments`` maps a decision variable to a
+          constant, written plainly (``"GOLD"``, ``10000``): the service quotes
+          strings itself and evaluates nothing, so ``"a + b"`` is stored as
+          that text. Compute values in a rule set or code file. The variable
+          must be in ``signature``; ``name`` labels the step.
+        * **Model** — ``id`` of a model in the model repository
+          (``list_registered_models``, Tier 6). Its inputs map to same-named
+          decision variables; its outputs (e.g. ``P_BAD1``, ``I_BAD``) are added
+          as decision variables unless ``signature`` has them, a class label
+          as a string. ``mappings`` renames: ``{"model variable": "decision variable"}``.
+        * **Branch** — ``variable`` (on the branch, or per case) and ``cases``,
+          checked in order; the first match runs, else ``default``. ``range``
+          cases take ``min`` and/or ``max`` (leave one out for an open end) and
+          compare inclusively, ``>= min`` and ``<= max``; cases must not share
+          a value, so end the lower case just below the next (``max 0.1999``
+          next to ``min 0.2``). ``equals`` cases take one ``value``; ``like``
+          cases a ``pattern`` with ``%`` and ``_`` wildcards.
+        * **Condition** — a DS2 ``expression`` over decision variables, e.g.
+          ``score >= 630 and band = 'A'``; check it with
+          validate_decision_expression first.
+        * **Rule set, segmentation tree, code file, sub-decision** — ``id``,
+          optional ``revision`` and ``mappings``. Segmentation trees, code
+          files, value lists and custom functions are created with the Tier 10
+          (Decisioning Advanced) tools; list_decisioning_assets finds existing ones.
 
         The decision is always stored in a SAS Content folder. Without
         ``folder`` it goes to the deployment's default folder; when there is
@@ -467,22 +511,14 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             signature: Flow-level input/output variables, each ``{"name",
                 "direction", "dataType"}`` — direction input or output;
                 dataType string, decimal, integer, date, datetime, boolean.
-            steps: The flow, in order — any step kind. Each step is one of
-                ``{"type": "rule_set" | "segmentation_tree" | "code_file" | "decision",
-                "id": ..., "revision": ..., "mappings": {...}}`` (a sub-decision is
-                type decision), ``{"type": "model", "id": <model repository id>}``,
-                ``{"type": "assignment", "name": ..., "assignments": {"var": value}}``
-                (constants written plainly — ``"GOLD"``, ``720``; an assignment does
-                not evaluate expressions, compute in a rule set or code file),
-                ``{"type": "condition", "expression": "score >= 630", "on_true": [...],
-                "on_false": [...]}``, or ``{"type": "branch", "branch_type": "range" |
-                "equals" | "like", "variable": ..., "cases": [{"label", "min", "max" |
-                "value" | "pattern", "steps": [...]}], "default": [...]}``. ``revision``
+            steps: The flow, in order — any step kind (see above): ``rule_set``,
+                ``segmentation_tree``, ``code_file``, ``decision`` (a sub-decision),
+                ``model``, ``assignment``, ``condition`` or ``branch``. ``revision``
                 defaults to the newest locked revision (one is locked if there is
                 none); "working" uses the editable one. Mappings default to
                 same-named decision variables; ``{"step term": "decision variable"}``
-                renames. The result's ``steps_report`` lists the revisions used and
-                any step input nothing maps to.
+                renames. The result's ``steps_report`` lists the revisions used,
+                the variables added and any step input nothing maps to.
             rule_set_steps: Ordered list of rule set steps to execute in
                 sequence, each ``{"ruleSetId", "versionId", "mappings"}`` —
                 versionId is a locked rule set revision (see
@@ -547,7 +583,9 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             decision_id: The existing decision flow UUID (not its name — list_decision_flows returns both).
             name: Decision name (max 60 chars).
             signature: Flow-level input/output variables.
-            steps: The whole flow, every step kind (see ``create_decision_flow``).
+            steps: The whole flow, every step kind — assignments, models,
+                branches, conditions, rule sets, trees, code files, sub-decisions;
+                ``create_decision_flow`` describes each, with an example.
             rule_set_steps: Ordered list of rule set steps (see
                 ``create_decision_flow`` for the shape).
             description: Optional description.
@@ -787,5 +825,23 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             published["moduleState"] = "pending"
             return published
 
-    register_content_tools(mcp, viya_session)
+    @mcp.tool()
+    async def validate_decision_expression(
+        expression: str, ctx: Context, signature: DictListParam | None = None
+    ) -> dict[str, Any]:
+        """Check that a DS2 expression compiles: a rule condition or action, a branch or a condition step.
+
+        The expression may use the variables in ``signature``, DS2 functions
+        and custom functions. Returns ``valid`` and the compiler's error and
+        warning lines. A variable the signature does not declare is a warning
+        (DS2 creates it), not an error.
+
+        Args:
+            expression: The expression, e.g. ``risk_band(credit_score) = 'LOW'``.
+            signature: The variables it uses, ``[{"name", "dataType", "direction"}]``.
+        """
+        async with viya_session("validate_decision_expression", ctx) as client:
+            return await assets.validate_expression(client, expression, signature)
+
+    register_lifecycle_tools(mcp, viya_session)
     register_lookup_tools(mcp, viya_session)
