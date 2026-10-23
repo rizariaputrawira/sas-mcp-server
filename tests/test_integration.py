@@ -1550,6 +1550,7 @@ async def test_lookup_table_workflow(integration_mcp_server, viya_token):
     async def score(module_id, country):
         result = await tool("score_data", {"module_id": module_id, "step_id": "execute",
                                            "input_data": {"country": country}})
+        assert "inputs_renamed" not in result  # the module takes the decision's own names
         return {o["name"]: o.get("value") for o in result["outputs"]}
 
     async with Client(integration_mcp_server) as client:
@@ -1596,6 +1597,8 @@ async def test_lookup_table_workflow(integration_mcp_server, viya_token):
                 "publish_name": f"mcp_test_lookup_{_SUFFIX}", "poll_timeout": 120})
             assert published["moduleState"] == "completed", published.get("moduleErrors")
             module = published["moduleId"]
+            step = await tool("get_mas_module_step_signature", {"module_id": module})
+            assert [i["name"] for i in step["inputs"]] == ["country"]
             assert await score(module, "Iran") == {"listed": "Y", "risk": "High"}
             assert (await score(module, "Germany"))["listed"] is None
 

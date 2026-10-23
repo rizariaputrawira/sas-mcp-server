@@ -17,6 +17,7 @@ kind through :mod:`sas_mcp_server.helpers.decision_flow_helpers`.
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
@@ -80,6 +81,40 @@ def _build_decision_flow_body(
         "signature": signature,
         "flow": {"steps": steps},
     }
+
+
+# One parameter of the outer execute method: optional in_out, a type such as
+# double, varchar(100) or package datagrid, and the quoted name.
+_EXECUTE_PARAM = re.compile(r'\s*(in_out\s+)?(?:package\s+)?[A-Za-z]\w*(?:\(\s*\d+\s*\))?\s+"([^"]+)"\s*')
+
+
+def plain_input_names(code: str) -> tuple[str, list[str]]:
+    """MAS decision code with the decision's input variables under their own names.
+
+    Code generated for MAS ends with a wrapper ``method execute(...)`` that
+    declares every input-only variable as ``"name_"`` and hands it on to
+    ``execute_internal``, which uses the real names; MAS publishes those wrapper
+    names as the module's inputs. Renaming them back inside the wrapper keeps
+    the code's behaviour and gives the module the decision's variable names.
+    Code whose wrapper does not have the expected shape is returned unchanged.
+    Returns the code and the names restored.
+    """
+    start = code.rfind("method execute(")
+    end = code.find("endpackage", start)
+    if start < 0 or end < 0 or "execute_internal(" not in code[start:end]:
+        return code, []
+    block = code[start:end]
+    params = []
+    for part in block[len("method execute("):block.index(");")].split(","):
+        match = _EXECUTE_PARAM.fullmatch(part)
+        if match is None:
+            return code, []
+        params.append((bool(match.group(1)), match.group(2)))
+    taken = {name for _, name in params}
+    renamed = [name for in_out, name in params if not in_out and name.endswith("_") and name[:-1] not in taken]
+    for name in renamed:
+        block = block.replace(f'"{name}"', f'"{name[:-1]}"')
+    return code[:start] + block + code[end:], [name[:-1] for name in renamed]
 
 
 async def _flow_body(
@@ -654,9 +689,10 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
         lookup via ``list_mas_modules``.
 
         The code is generated for MAS, as SAS Intelligent Decisioning does when
-        it publishes: lookup tables are read from MAS. The module's inputs are
-        therefore named with a trailing underscore (``credit_score_``);
-        ``score_data`` accepts the plain names too.
+        it publishes, so lookup tables are read from MAS. Unlike a module the
+        Intelligent Decisioning UI publishes, whose inputs end in an underscore
+        (``credit_score_``), the module's inputs keep the decision's variable
+        names.
 
         Args:
             decision_id: The decision flow UUID (not its name — list_decision_flows returns both).
@@ -678,13 +714,14 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
                 params={"codeTarget": "microAnalyticService"},
             )
             raise_for_viya_status(code_resp)
+            code, _ = plain_input_names(code_resp.text)
             body = {
                 "name": publish_name,
                 "destinationName": destination_name,
                 "modelContents": [
                     {
                         "modelName": publish_name,
-                        "code": code_resp.text,
+                        "code": code,
                         "codeType": "ds2",
                         "sourceUri": f"/decisions/flows/{decision_id}/revisions/{revision_id}",
                     }

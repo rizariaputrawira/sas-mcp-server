@@ -44,7 +44,8 @@ Behaviour this relies on, probed against SAS Viya 2026.09 in October 2026:
 * **MAS needs MAS code.** Decision code generated for CAS (the default)
   references the lookup as a CAS format and fails to publish to MAS ("Unrecognized
   format"); code generated with ``codeTarget=microAnalyticService`` calls the
-  lookup's MAS package.
+  lookup's MAS package. That code also renames the decision's inputs to
+  ``name_`` in its outer ``execute`` method, which publish_decision_flow undoes.
 """
 
 import asyncio

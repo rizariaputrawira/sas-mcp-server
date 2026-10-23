@@ -99,10 +99,10 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
     async def score_data(module_id: str, step_id: str, input_data: dict, ctx: Context) -> dict[str, Any]:
         """Score data against a published model or decision (MAS module).
 
-        A decision published from SAS Intelligent Decisioning (or with
-        ``publish_decision_flow``) names its inputs with a trailing underscore
-        (``credit_score_``); the plain names are accepted and mapped, and the
-        result's ``inputs_renamed`` says so.
+        A decision published from the SAS Intelligent Decisioning UI names its
+        inputs with a trailing underscore (``credit_score_``); the plain names
+        are accepted and mapped, and the result's ``inputs_renamed`` says so.
+        (``publish_decision_flow`` keeps the plain names.)
 
         Args:
             module_id: MAS module ID.

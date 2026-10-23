@@ -10,6 +10,7 @@ import pytest
 
 from sas_mcp_server.helpers import lookup_helpers as lookups
 from sas_mcp_server.helpers.decisioning_assets import DecisioningError
+from sas_mcp_server.tools.decisioning import plain_input_names
 from sas_mcp_server.tools.model_scoring import match_input_names
 from test_decisioning_content_tools import FakeViya, call
 
@@ -389,3 +390,47 @@ async def test_score_data_does_not_retry_when_no_name_maps(fake):
     viya.add("POST", r"/steps/execute$", {"message": "bad value"}, status=400)
     result = await call(mcp, "score_data", {"module_id": "m", "step_id": "execute", "input_data": {"score": "x"}})
     assert "error" in result and len(viya.calls("POST", r"/steps/execute$")) == 1
+
+
+# --- publishing with the decision's input names --------------------------------------------
+
+MAS_WRAPPER = '''package Decision_1 / inline;
+    method execute_internal(varchar(100) "country", in_out varchar "risk", in_out integer "_filter_");
+        "rules_hdl".execute("country", "risk");
+    end;
+    method execute(
+       varchar(100) "country_"
+      ,double "score_"
+      ,in_out varchar "risk"
+      ,in_out package datagrid "rows"
+);
+      dcl integer _filter_;
+      execute_internal(
+          "country_"
+         ,"score_"
+         ,"risk"
+         ,"rows"
+      ,"_filter_"
+      );
+    end;
+      endpackage;
+'''
+
+
+def test_plain_input_names_renames_only_the_wrapper_inputs():
+    code, renamed = plain_input_names(MAS_WRAPPER)
+    assert renamed == ["country", "score"]
+    wrapper = code[code.rindex("method execute("):]
+    assert '"country_"' not in wrapper and '"score_"' not in wrapper
+    assert 'varchar(100) "country"' in wrapper and '"risk"' in wrapper and '"rows"' in wrapper
+    assert code[:code.rindex("method execute(")] == MAS_WRAPPER[:MAS_WRAPPER.rindex("method execute(")]
+
+
+def test_plain_input_names_leaves_a_clash_and_unknown_shapes_alone():
+    clash = MAS_WRAPPER.replace('in_out varchar "risk"\n', 'in_out varchar "risk"\n      ,in_out double "score"\n', 1)
+    _, renamed = plain_input_names(clash)
+    assert renamed == ["country"]  # "score" is taken by an output
+    assert plain_input_names("package x; method execute(double a_); end; endpackage;") == (
+        "package x; method execute(double a_); end; endpackage;", [])
+    odd = MAS_WRAPPER.replace('double "score_"', 'double score_')
+    assert plain_input_names(odd) == (odd, [])
