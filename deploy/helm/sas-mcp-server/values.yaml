@@ -58,6 +58,17 @@ server:
   # means each person's own My Folder. Empty = no default: the tools ask the
   # user for a folder, since these assets are always stored in one.
   defaultFolder: ""
+  # Issue and enforce a client secret for MCP clients that register asking for
+  # one. Required for a Microsoft 365 Copilot declarative agent, whose
+  # registration service refuses a server that only knows public clients.
+  # Clients that register as public are unaffected.
+  oauthClientSecrets: false
+  # Rename tools on the wire by prefix: comma-separated old=new pairs. Empty =
+  # no renaming. Set "catalog_=infocat_" for a deployment added to a Microsoft
+  # Copilot Studio agent, whose runtime fails every turn (MCS-2011) while a
+  # tool whose name starts with "catalog_" is listed. The original names stay
+  # callable and are what the logs show.
+  toolRename: ""
   # Timeout in seconds for every SAS Viya REST call the tools make. Generous by
   # default because compute sessions can be slow to start; lower it to fail
   # fast behind a proxy that drops idle connections.

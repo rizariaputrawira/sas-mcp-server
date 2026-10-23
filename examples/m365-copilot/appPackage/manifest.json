@@ -1,0 +1,35 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.19",
+    "version": "1.0.0",
+    "id": "7ce4c0e9-4ae1-440e-8dcd-f58737e2daff",
+    "developer": {
+        "name": "SAS Institute Inc.",
+        "websiteUrl": "https://github.com/sassoftware/sas-mcp-server",
+        "privacyUrl": "https://www.sas.com/en_us/legal/privacy-statement.html",
+        "termsOfUseUrl": "https://www.sas.com/en_us/legal/terms-of-use.html"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "SAS Viya Analyst",
+        "full": "SAS Viya Analyst for Microsoft 365 Copilot"
+    },
+    "description": {
+        "short": "Explore SAS Viya data and run SAS analytics from Microsoft 365 Copilot.",
+        "full": "A declarative agent that connects Microsoft 365 Copilot to a SAS Viya environment through the SAS Viya MCP Server. Discover CAS tables, profile columns, query data with FedSQL, and execute SAS code — all from a Copilot conversation, with each user authenticated against Viya as themselves."
+    },
+    "accentColor": "#FFFFFF",
+    "copilotAgents": {
+        "declarativeAgents": [
+            {
+                "id": "declarativeAgent",
+                "file": "declarativeAgent.json"
+            }
+        ]
+    },
+    "permissions": [],
+    "validDomains": []
+}

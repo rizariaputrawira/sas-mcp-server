@@ -16,6 +16,13 @@ load_dotenv()
 
 SSL_VERIFY = env_bool("SSL_VERIFY", True)
 ALLOW_RAW_BEARER = env_bool("ALLOW_RAW_BEARER", False)
+# Issue and enforce client secrets for MCP clients that register asking for
+# one (default: false). FastMCP 4 registers every client as public; Microsoft
+# 365 Copilot's registration service asks for client_secret_basic and refuses
+# a registration that comes back without a secret, so a deployment used from a
+# Copilot declarative agent needs this on. Clients that register as public are
+# unaffected. See sas_mcp_server.auth.PermissiveOAuthProxy.register_client.
+MCP_OAUTH_CLIENT_SECRETS = env_bool("MCP_OAUTH_CLIENT_SECRETS", False)
 AUTH_ENABLED = env_bool("VIYA_AUTH", True)
 
 # --- Opt-in collection mode (telemetry) -------------------------------------
@@ -152,6 +159,14 @@ MCP_STATELESS_HTTP = env_bool("MCP_STATELESS_HTTP", False)
 # a path such as /Public/Content/Decisions. Resolved per call, with the
 # caller's own permissions. See sas_mcp_server.helpers.folder_helpers.
 MCP_DEFAULT_FOLDER = os.getenv("MCP_DEFAULT_FOLDER", "").strip()
+# Rename tools on the wire (default: empty, no renaming). Comma-separated
+# ``old=new`` pairs, each replacing a tool-name prefix: ``catalog_=infocat_``
+# presents catalog_search as infocat_search, and so on. For hosts that refuse
+# names the protocol allows — Microsoft Copilot Studio's agent runtime fails
+# every turn (MCS-2011) while a tool starting with ``catalog_`` is listed.
+# Only what the client sees changes; the original names stay callable.
+# Parsed and applied by sas_mcp_server.tool_rename.
+MCP_TOOL_RENAME = os.getenv("MCP_TOOL_RENAME", "")
 
 _mcp_base_url = os.getenv("MCP_BASE_URL", "").strip()
 # An empty value is the documented .env.sample default. Also ignore values
@@ -239,4 +254,5 @@ viya_auth = PermissiveOAuthProxy(
     token_verifier=token_verifier,
     valid_scopes=["openid"],
     allow_raw_bearer=ALLOW_RAW_BEARER,
+    client_secrets=MCP_OAUTH_CLIENT_SECRETS,
 )

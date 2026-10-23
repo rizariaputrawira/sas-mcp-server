@@ -794,6 +794,7 @@ async def test_report_authoring_workflow(integration_mcp_server):
                         "report_id": report_id,
                         "operations": [{"addPage": {"pageName": "SaveAsPage"}}],
                         "result_report_name": f"{report_name} SaveAs",
+                        "save_as": True,
                     },
                 )
             ).data
